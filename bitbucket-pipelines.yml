@@ -1,0 +1,39 @@
+image: gradle:8.6.0
+
+pipelines:
+  tags:
+    '**':
+      - step:
+          name: Build and Push Docker Image
+          services:
+            - docker
+          script:
+            # 태그명 가져오기
+            - export TAG=${BITBUCKET_TAG}
+#            - export DOCKER_FILE=./llm-packaging/llm-serving/llm-backend
+            - export DOCKER_FILE=.
+            # java 소스 build
+            - chmod +x gradlew  # 실행 권한 부여
+            - ./gradlew clean generateProto bootJar # Gradle 빌드
+#            - ls -l ./build/libs/
+#            - mv ./build/libs/*.jar $DOCKER_FILE
+#            - mv ./build/libs/*.jar .
+            # Docker 레지스트리 통신 확인
+#            - echo "Checking Docker registry connection..."
+#            - curl "https://docker.maum.ai:443/v2/_catalog"
+            # Docker 이미지 빌드
+            - docker build -t docker.maum.ai:443/chathub/backend:$TAG $DOCKER_FILE
+            # Docker 이미지 푸시
+            - docker push docker.maum.ai:443/chathub/backend:$TAG
+
+## 아래는 아직 진행 중
+#      - step:
+#          name: Deploy to Server
+#          script:
+#            # SSH 연결 정보
+#            - export TAG=${BITBUCKET_TAG}
+#            - export SERVER_IP="121.133.247.250"
+#            - export SERVER_PORT="200"
+#            - export SERVER_USER="bhr0554"
+#
+#            - ssh -v -p $SERVER_PORT $SERVER_USER@$SERVER_IP "sudo -S ./llm-backend_deploy.sh $TAG"

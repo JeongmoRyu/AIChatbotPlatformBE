@@ -1,0 +1,136 @@
+server:
+  port: 9993
+
+
+spring:
+  pid:
+    file: local.pid
+
+
+  datasource:
+    url: jdbc:postgresql://localhost:25432/postgres?currentSchema=.
+
+    username: username
+    password: password
+    hikari:
+      maximum-pool-size: 3
+      max-lifetime: 55000        # 커넥션의 최대 수명(55초)
+      idle-timeout: 30000        # 커넥션 유휴 시간(30초) 후 회수
+      connection-timeout: 30000  # 커넥션을 얻기 위해 대기하는 최대 시간(30초)
+      validation-timeout: 5000   # 커넥션 유효성 검사를 위한 타임아웃(5초)
+      connection-test-query: SELECT 1  # 커넥션 유효성 검사 쿼리
+      register-mbeans: true
+  jpa:
+    hibernate:
+
+
+  second-datasource:
+    jdbc-url: ${SECOND_DBSOURCE_URL:seconddatabase}
+    username: ${SECOND_DBSOURCE_USERNAME:seconddatabase}
+    password: ${SECOND_DBSOURCE_PASSWORD:seconddatabase}
+    driver-class-name: ${SECOND_DBSOURCE_DRIVER:oracle.jdbc.OracleDriver}
+    schema: ${SECOND_DBSOURCE_SCHEMA:seconddatabase}
+    db-link: ${SECOND_DBSOURCE_DBLINK:}
+
+# 애플리케이션 변수 설정
+service:
+  question:
+    question-generate-id: ${QUESTION_GENERATE_ID:1}
+  fn-test:
+    chatbot-id: ${FN_TEST_CHATBOT_ID:1}
+#    embedding-id: ${FN_TEST_EMBEDDING_ID:35}
+    embedding-id: ${FN_TEST_EMBEDDING_ID:4}
+  ranker-api:
+    schema: ${CHATHUB_RANKER_API_SCHEMA:http}
+    ip: ${CHATHUB_RANKER_API_IP:127.0.0.1}
+    port: ${CHATHUB_RANKER_API_PORT:8000}
+  nexon:
+    chatbot-list: 10,90,103,104,106 # 콤마(,) 사이는 공백 없이 입력
+    user-id: nexon # nexon 테스트용 ID
+  kakao:
+    chatbot-id: ${KAKAO_CHATBOT_ID:1}
+    channel:
+      url: .
+      id: ENC(.)
+      secret: ENC(.)
+      senderkey: ENC(.)
+      senderno: .
+  chatplay:
+    enable: ${CHATPLAY_ENABLE:false}
+  n8n:
+    enable: ${N8N_ENABLE:true}
+    jdbc-url: ${N8N_DBSOURCE_URL:jdbc:postgresql://localhost:35432/postgres}
+    username: ${N8N_DBSOURCE_USERNAME:.}
+    password: ${N8N_DBSOURCE_PASSWORD:.}
+    driver-class-name: ${N8N_DBSOURCE_DRIVER:org.postgresql.Driver}
+
+  elastic:
+    username: .
+    password: .
+
+  embedding-api: ${CHATHUB_EMBEDDING_API:http://localhost:25001}
+
+  socketio:
+    port: 9994
+    hostname: localhost
+    retry:
+      count: 20
+      interval: 5000
+  file:
+    # 파일 저장 디렉토리 경로
+    path: /Volumes/data/chathub/be_data/files/chathub/doc
+    img-path: /Volumes/data/chathub/be_data/files/chathub/image
+    # 파일 다운로드 링크 경로
+    url: /Volumes/data/chathub/be_data/files/chathub
+    #엠베딩용 파일 저장 위치
+    s3-doc: /Volumes/data/chathub/be_data/files/chathub/s3
+    s3-doc-remote: /Volumes/data/chathub/be_data/files/chathub/s3
+
+  server:
+    # 서버 URL
+    url: ${SERVER_URL:http://localhost:9993}
+
+  # CORS 설정
+  cors:
+    # 요청 허용 대상 목록
+    origins: http://localhost:3000, https://localhost:3000, null
+    # 허용 헤더 목록
+    headers: Content-Type, Authorization, ssoagent-type
+    # 자격증명 설정
+    credentials: true
+  batch:
+    # 배치 사용 유무
+    status: true
+  slack:
+    # 슬랙 사용 유무
+    status: false
+  log:
+    # 로그 디렉토리 경로
+    path: /Users/maum.ai/playground/logs
+    info:
+      # [INFO]로그 디렉토리 경로
+      path: /Users/maum.ai/playground/logs/info
+    err:
+      # [ERROR]로그 디렉토리 경로
+      path: /Users/maum.ai/playground/logs/err
+    zip:
+      # 로그 압축 디렉토리 경로
+      path: /Users/maum.ai/playground/logs/backup
+  # Grpc 설정
+  grpc:
+
+    chat:
+
+      host: localhost
+
+      port: 8080
+#        host: 10.50.5.14
+#        port: 8080
+  redis:
+    chatbotinfo-key: chathub-dev-chatbotinfo
+
+logging:
+  level:
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    org.hibernate.type.descriptor.sql.BasicExtractor: TRACE
+    ai.maum.chathub.api: DEBUG

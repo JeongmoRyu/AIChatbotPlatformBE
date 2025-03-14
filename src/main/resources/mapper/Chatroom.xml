@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.mybatis.mapper.ChatroomMapper">
+    <update id="updateChatroomTitle" parameterType="ai.maum.chathub.mybatis.vo.ChatroomVO">
+        UPDATE chatroom
+        SET title=#{title}
+        WHERE id=#{id}
+    </update>
+
+    <select id="selectChatroomById" resultType="ai.maum.chathub.mybatis.vo.ChatroomVO" parameterType="Long">
+        SELECT id, chatbot_id, reg_user_id, seq, title, created_at, updated_at
+        FROM chatroom
+        where id = #{id}
+    </select>
+    <select id="selectChatroomDetailById" resultType="ai.maum.chathub.mybatis.vo.ChatroomDetailVO" parameterType="Long">
+        SELECT id, room_id, seq, "role", "content", created_at, updated_at, feedback
+        FROM chatroom_detail
+        where id = #{id}
+    </select>
+    <select id="selectChatHisotryForMultiturn" resultType="ai.maum.chathub.mybatis.vo.ChatHistoryVO" parameterType="Map">
+        SELECT seq,
+               MAX(CASE WHEN role = 'user' THEN content END) AS input,
+               MAX(CASE WHEN role = 'assistant' THEN content END) AS output
+          FROM chatroom_detail
+         WHERE seq in (
+            SELECT seq
+            FROM (
+                SELECT seq
+                 , count (*)
+                FROM chatroom_detail
+                WHERE room_id = #{room_id}
+                GROUP BY seq
+                HAVING count (*)
+                 > 1
+                ORDER BY seq DESC
+            <if test="multi_turn != null">
+                LIMIT #{multi_turn}
+            </if>
+                ) AS A
+            )
+         GROUP BY seq
+         ORDER BY seq
+    </select>
+    <select id="selectChatroomByRegUserIdLimitOne" resultType="ai.maum.chathub.mybatis.vo.ChatroomVO" parameterType="String">
+        SELECT id, chatbot_id, reg_user_id, seq, title, created_at, updated_at
+          FROM chatroom
+         WHERE reg_user_id = #{reguserId}
+         LIMIT 1
+    </select>
+    <select id="selectChatroomByRegUserIdAndChatbotIdLimitOne" resultType="ai.maum.chathub.mybatis.vo.ChatroomVO" parameterType="map">
+        SELECT id, chatbot_id, reg_user_id, seq, title, created_at, updated_at
+        FROM chatroom
+        WHERE reg_user_id = #{reguserId}
+          AND chatbot_id = #{chatbotId}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <update id="updateChatroomTimestamp" parameterType="ai.maum.chathub.mybatis.vo.ChatroomVO">
+        UPDATE chatroom
+        SET updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+</mapper>

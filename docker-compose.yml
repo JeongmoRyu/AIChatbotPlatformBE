@@ -1,0 +1,24 @@
+services:
+  chathub-api:
+    build: .
+    container_name: chathub-api
+    image: chathub-api:v0.0.1
+    networks:
+      - chathub-network
+    ports:
+      - "9983:9993"
+      - "9984:9994"
+    environment:
+      - ENV=docker
+      - env password
+    volumes:
+      - data:/data  # 호스트의 /data 폴더를 컨테이너의 /data 폴더에 마운트
+
+volumes:
+  #  data:
+  chathub_data:
+    name: chathub_data
+
+networks:
+  chathub-network:
+    external: true
