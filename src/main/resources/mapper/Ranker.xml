@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.mybatis.mapper.RankerMapper">
+    <select id="selectModelDetailList" resultType="String" parameterType="Long">
+        SELECT
+            CASE
+                WHEN sub.ensemble IS NOT NULL THEN
+                    json_build_object(
+                            'name', rm.name,
+                            'ensemble', sub.ensemble
+                    )::jsonb
+                ELSE
+                    to_json(rm.name)::jsonb
+                END AS model_data
+        FROM
+            ranker_model AS rm
+                LEFT JOIN (
+                SELECT
+                    model_id,
+                    jsonb_agg(rme.name) AS ensemble
+                FROM
+                    ranker_model_ensemble AS rme
+                GROUP BY
+                    model_id
+            ) AS sub ON sub.model_id = rm.id
+        WHERE rm.ranker_id = #{rankerId}
+    </select>
+
+    <select id="selectModelDetail" resultType="ai.maum.chathub.api.ranker.dto.res.RankerHistoryDetailRes" parameterType="Long">
+        WITH ensemble_data AS (
+            SELECT
+                model_id,
+                jsonb_agg(json_build_object('model', rme.name, 'weight', rme.weight)) AS ensemble
+            FROM
+                ranker_model_ensemble AS rme
+            WHERE EXISTS (
+                SELECT 1 FROM ranker_model AS rm WHERE rm.id = rme.model_id AND rm.ranker_id = #{rankerId}
+            )
+            GROUP BY
+                model_id
+        ),
+             file_data AS (
+                 SELECT
+                     rf.ranker_id,
+                     jsonb_agg(rf.name) AS file_path
+                 FROM
+                     ranker_file AS rf
+                 WHERE rf.ranker_id = #{rankerId}
+                 GROUP BY
+                     rf.ranker_id
+             ),
+             model_data AS (
+                 SELECT
+                     rm.ranker_id,
+                     CASE
+                         WHEN ed.ensemble IS NOT NULL THEN
+                             json_build_object(
+                                     'name', rm.name,
+                                     'ensemble', ed.ensemble
+                             )::jsonb
+                         ELSE
+                             to_json(rm.name)::jsonb
+                         END AS model_data
+                 FROM
+                     ranker_model AS rm
+                         LEFT JOIN ensemble_data AS ed ON ed.model_id = rm.id
+                 WHERE rm.ranker_id = #{rankerId}
+             )
+        SELECT
+            rh.id,
+            rh.name,
+            rh.use_fixed_chunk,
+            rh.fixed_chunk_size,
+            rh.fixed_chunk_overlap,
+            rh.use_semantic_chunk,
+            rh.semantic_chunk_bp_type,
+            rh.semantic_chunk_embedding,
+            rh.top_k,
+            COALESCE(fd.file_path, '[]') AS str_file_path,
+            jsonb_agg(md.model_data) AS str_embedding_models
+        FROM
+            ranker_history AS rh
+                LEFT JOIN file_data AS fd ON fd.ranker_id = rh.id
+                LEFT JOIN model_data AS md ON md.ranker_id = rh.id
+        WHERE
+            rh.id = #{rankerId}
+        GROUP BY
+            rh.id, fd.file_path
+    </select>
+</mapper>

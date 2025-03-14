@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.api.routine.repository.RoutineScheduleMapper">
+    <select id="getSendList" resultType="ai.maum.chathub.api.routine.entity.RoutineScheduleVO">
+        SELECT id, send_time, task_cd, receive_id, name, send_yn, updated_at
+         FROM routine_schedule
+        WHERE send_time &lt; now()
+          AND send_yn = 'N'
+    </select>
+    <select id="getSendTargetById" resultType="ai.maum.chathub.api.routine.entity.RoutineScheduleVO" parameterType="Long">
+        SELECT id, send_time, task_cd, receive_id, name, send_yn, updated_at
+        FROM routine_schedule
+        WHERE id = #{id)
+    </select>
+    <update id="setSendFlags" parameterType="java.util.HashMap">
+        UPDATE routine_schedule SET send_yn = #{sendYn}, updated_at = now()
+         WHERE id IN (
+             <foreach collection="idList" item="item" separator=",">
+                 #{item}
+             </foreach>
+             )
+    </update>
+    <update id="setSendFlag" parameterType="java.util.HashMap">
+        UPDATE routine_schedule SET send_yn = #{sendYn}, updated_at = now()
+            <choose>
+                <when test="result != null">
+                    , result = #{result}
+                </when>
+            </choose>
+        WHERE id = #{id}
+    </update>
+    <update id="setSendFlagBeforeExecute" parameterType="ai.maum.chathub.api.routine.entity.RoutineScheduleVO">
+        UPDATE routine_schedule SET send_yn = 'T', updated_at = now()
+        WHERE id = #{id}
+          AND send_yn = #{sendYn}
+          AND updated_at = #{updatedAt}
+    </update>
+</mapper>

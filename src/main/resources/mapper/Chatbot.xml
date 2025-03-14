@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.mybatis.mapper.ChatbotMapper">
+
+    <select id="selectChatbotById" resultType="ai.maum.chathub.mybatis.vo.ChatbotVO" parameterType="Long">
+        SELECT
+            C.user_id
+             , C.id
+             , C.name
+             , C.chatbot_type_cd
+             , C.prompt_role
+             , C.prompt_requirement
+             , C.prompt_tail
+             , C.retriever_engine_id
+             , C.llm_engine_id
+             , C.tail_engine_id
+             , C.rag_parameters
+             , C.llm_parameters
+             , C.tail_parameters
+             , C.client_info
+             , C.multi_turn
+             , C.questions
+             , C.created_at
+             , C.updated_at
+             , LE.vendor as llm_engine_vendor
+             , RE.vendor as retriever_engine_vendor
+        from chatbot C
+                 left join engine LE on LE.id = C.llm_engine_id
+                 left join engine RE on RE.id = C.retriever_engine_id
+        where C.id = #{id}
+    </select>
+    <select id="selectChatbotList" resultType="ai.maum.chathub.mybatis.vo.ChatbotVO">
+        SELECT
+            C.user_id
+             , C.id
+             , C.name
+             , C.chatbot_type_cd
+             , C.prompt_role
+             , C.prompt_requirement
+             , C.prompt_tail
+             , C.retriever_engine_id
+             , C.llm_engine_id
+             , C.tail_engine_id
+             , C.rag_parameters
+             , C.llm_parameters
+             , C.tail_parameters
+             , C.questions
+             , C.created_at
+             , C.updated_at
+             , LE.vendor as llm_engine_vendor
+             , RE.vendor as retriever_engine_vendor
+        from chatbot C
+                 left join engine LE on LE.id = C.llm_engine_id
+                 left join engine RE on RE.id = C.retriever_engine_id
+    </select>
+    <!--    <insert id="insertChatbot" parameterType="ChabotVO">-->
+    <!--        INSERT INTO chatbot (-->
+    <!--            user_id,-->
+    <!--            name,-->
+    <!--            chatbot_type_cd,-->
+    <!--            prompt_role,-->
+    <!--            prompt_requirement` varchar(500) DEFAULT NULL COMMENT '프롬프트-요구사항',-->
+    <!--            retriever_engine_id` bigint(20) DEFAULT NULL COMMENT 'Retriver 엔진ID',-->
+    <!--            retriever_top_k` int(11) DEFAULT NULL COMMENT 'Retriever엔진-Top K',-->
+    <!--            retriever_max_token` int(11) DEFAULT NULL COMMENT 'Retriever엔진-Maximum tokens',-->
+    <!--            llm_engine_id` bigint(20) DEFAULT NULL COMMENT 'LLM엔진ID',-->
+    <!--            llm_top_p` float DEFAULT NULL COMMENT 'LLM엔진-Top P',-->
+    <!--            llm_top_k` int(11) DEFAULT NULL COMMENT 'LLM엔진-Top K',-->
+    <!--            llm_temp` float DEFAULT NULL COMMENT 'LLM엔진-temperature',-->
+    <!--            llm_pres_p` float DEFAULT NULL COMMENT 'LLM엔진-Presence Penalty',-->
+    <!--            llm_freq_p` float DEFAULT NULL COMMENT 'LLM엔진-Frequncy Penalty',-->
+    <!--        ) VALUES (-->
+
+    <!--        )-->
+    <!--    </insert>-->
+</mapper>

@@ -1,0 +1,135 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '2.7.11'
+    id 'io.spring.dependency-management' version '1.0.15.RELEASE'
+    id 'com.google.protobuf' version '0.8.19'
+}
+
+group = 'ai.maum'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()  // Maven Central 리포지토리 명시
+    gradlePluginPortal()  // Gradle Plugin Portal 리포지토리 명시
+}
+
+dependencies {
+    // Database 설정
+    implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter:2.3.0'
+    runtimeOnly 'org.mariadb.jdbc:mariadb-java-client:3.1.4'
+    implementation 'org.postgresql:postgresql:42.7.3'
+
+    // Spring Security
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.security:spring-security-core:5.7.12'
+    implementation 'org.springframework.security:spring-security-config:5.7.12'
+
+    // Web, WebSocket, WebFlux
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+    // AOP, OpenAPI, Slack API
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+    implementation 'org.springdoc:springdoc-openapi-ui:1.6.14'
+    implementation 'com.slack.api:bolt:1.29.2'
+
+    // gRPC & Protobuf
+    implementation 'io.grpc:grpc-netty-shaded:1.55.1'
+    implementation 'io.grpc:grpc-protobuf:1.55.1'
+    implementation 'io.grpc:grpc-stub:1.55.1'
+    implementation 'com.google.protobuf:protobuf-java-util:3.18.1'
+
+    // JWT
+    implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
+
+    // Lombok (compileOnly 및 annotationProcessor 분리)
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // OpenAI, Netty, WebSocket
+    implementation 'com.azure:azure-ai-openai:1.0.0-beta.6'
+    implementation 'io.netty:netty-resolver-dns-native-macos:4.1.75.Final:osx-aarch_64'
+//    implementation 'com.corundumstudio.socketio:netty-socketio:2.0.8'
+    implementation 'com.corundumstudio.socketio:netty-socketio:2.0.11'
+
+    // JSON, ElasticSearch, JSP, FreeMarker
+    implementation 'org.json:json:20210307'
+    implementation 'org.elasticsearch.client:elasticsearch-rest-high-level-client:7.17.18'
+    implementation 'org.springframework.boot:spring-boot-starter-freemarker'
+    implementation 'org.apache.tomcat.embed:tomcat-embed-jasper'
+    implementation 'javax.servlet:jstl:1.2'
+
+    // Yaml & HikariCP (Connection Pool)
+    implementation 'org.yaml:snakeyaml:2.0'
+    implementation 'com.zaxxer:HikariCP:5.1.0'
+
+    // Jasypt for encryption
+    implementation 'com.github.ulisesbocchio:jasypt-spring-boot-starter:3.0.5'
+
+    // SCP 관련
+    implementation 'com.jcraft:jsch:0.1.55'
+
+    // Excel 파일 처리
+    implementation 'org.apache.poi:poi:5.2.3'
+    implementation 'org.apache.poi:poi-ooxml:5.2.3'
+
+    // Oracle 관련
+//    implementation 'com.oracle.database.jdbc:ojdbc8'
+    implementation 'com.oracle.database.jdbc:ojdbc8:19.11.0.0'
+    // Test dependencies
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+
+    // Spring Data Redis 의존성
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    // Redis 클라이언트로 Lettuce 사용 (기본)
+    implementation group: 'io.lettuce', name: 'lettuce-core', version: '6.4.0.RELEASE'
+    // 또는 Jedis 클라이언트를 사용하려면
+    // implementation 'redis.clients:jedis'
+
+    // Flyway DB (DB Migration)
+    implementation 'org.flywaydb:flyway-core'
+}
+
+protobuf {
+    protoc {
+        artifact = 'com.google.protobuf:protoc:3.22.2'
+    }
+    plugins {
+        grpc {
+            artifact = 'io.grpc:protoc-gen-grpc-java:1.55.1'
+        }
+    }
+    generateProtoTasks {
+        ofSourceSet('main').forEach { task ->
+            task.plugins {
+                grpc {}
+            }
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs 'src/main/java', 'build/generated/source'
+        }
+    }
+}

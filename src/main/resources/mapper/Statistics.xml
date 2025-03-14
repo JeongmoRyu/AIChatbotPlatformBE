@@ -1,0 +1,2192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.mybatis.mapper.StatisticsMapper">
+    <select id="statDay" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date
+        ),
+        hours AS (
+            SELECT generate_series(0, 23) AS hour
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,
+                name AS model_name
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        token_types AS (
+            SELECT 'I' AS token_type
+            UNION ALL
+            SELECT 'O' AS token_type
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                h.hour,
+                t.token_type
+            FROM
+                models m
+                CROSS JOIN hours h
+                CROSS JOIN token_types t
+        ),
+        aggregated_data AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.hour,
+                a.token_type,
+                COALESCE(SUM(r.tokens), 0) AS total_tokens
+            FROM
+                all_combinations a
+                LEFT JOIN stat_chathub_raw r
+                ON a.model = r.model
+                AND a.token_type = r.token_type
+                AND DATE_PART('hour', r.created_at) = a.hour
+                AND r.created_at >= (SELECT input_date FROM target_date)
+                AND r.created_at < (SELECT input_date FROM target_date) + INTERVAL '1 day'
+            GROUP BY
+                a.model, a.model_name, a.hour, a.token_type
+        ),
+        hourly_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                hour,
+                jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+                    'T',
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+                ) AS hour_data
+            FROM
+                aggregated_data
+            GROUP BY
+                model, model_name, hour
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'hour', hour,
+                        'input', (hour_data->>'I')::int,
+                        'output', (hour_data->>'O')::int,
+                        'total', (hour_data->>'T')::int
+                    )
+                    ORDER BY hour
+                ) AS data
+            FROM
+                hourly_data_with_total
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'input', SUM((hour_data->>'I')::int),
+                    'output', SUM((hour_data->>'O')::int),
+                    'total', SUM((hour_data->>'T')::int)
+                ) AS total_data
+            FROM
+                hourly_data_with_total
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.total_data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+    ]]>
+    </select>
+    <select id="apiStatDay" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+        ),
+             hours AS (
+                 SELECT generate_series(0, 23) AS hour
+            ),
+            models AS (
+        SELECT DISTINCT model, name AS model_name
+        FROM engine
+        WHERE TYPE = #{dataType} AND USE_YN = 'Y'
+            ),
+            all_combinations AS (
+        SELECT m.model, m.model_name, h.hour
+        FROM models m
+            CROSS JOIN hours h
+            ),
+            aggregated_data AS (
+        SELECT
+            a.model,
+            a.model_name,
+            a.hour,
+            r.service_type,
+            -- AGENT 요청 수 계산
+            COUNT(DISTINCT CASE
+            WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+            THEN (r.seq || '-' || r.log_id)::text
+            ELSE NULL
+            END) AS total_requests_agent,
+            -- EMBEDDING 요청 수 계산
+            COUNT(CASE
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+            THEN 1
+            ELSE NULL
+            END) AS total_requests_embedding,
+            -- AGENT 성공 요청 수 계산
+            COUNT(DISTINCT CASE
+            WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+            AND (r.seq || '-' || r.log_id)::text IN (
+            SELECT (seq || '-' || log_id)::text
+            FROM stat_chathub_raw
+            WHERE token_type = 'O'
+            AND DATE_PART('hour', created_at) = a.hour
+            AND created_at >= (SELECT input_date FROM target_date)
+            AND created_at < (SELECT input_date FROM target_date) + INTERVAL '1 day'
+            )
+            THEN (r.seq || '-' || r.log_id)::text
+            ELSE NULL
+            END) AS success_count_agent,
+            -- EMBEDDING 성공 요청 수 계산
+            COUNT(CASE
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+            THEN 1
+            ELSE NULL
+            END) AS success_count_embedding,
+            -- AGENT 실패 요청 수 계산
+            COUNT(DISTINCT CASE
+            WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+            AND (r.seq || '-' || r.log_id)::text NOT IN (
+            SELECT (seq || '-' || log_id)::text
+            FROM stat_chathub_raw
+            WHERE token_type = 'O'
+            AND DATE_PART('hour', created_at) = a.hour
+            AND created_at >= (SELECT input_date FROM target_date)
+            AND created_at < (SELECT input_date FROM target_date) + INTERVAL '1 day'
+            )
+            THEN (r.seq || '-' || r.log_id)::text
+            ELSE NULL
+            END) AS failure_count_agent,
+            -- EMBEDDING 실패 요청 수 계산
+            (COUNT(CASE
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+            THEN 1
+            ELSE NULL
+            END)
+            - COUNT(CASE
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+            THEN 1
+            ELSE NULL
+            END)) AS failure_count_embedding
+        FROM
+            all_combinations a
+            LEFT JOIN stat_chathub_raw r
+        ON a.model = r.model
+            AND DATE_PART('hour', r.created_at) = a.hour
+            AND r.created_at >= (SELECT input_date FROM target_date)
+            AND r.created_at < (SELECT input_date FROM target_date) + INTERVAL '1 day'
+        GROUP BY
+            a.model, a.model_name, a.hour, r.service_type
+            ),
+            hourly_data AS (
+        SELECT
+            model,
+            model_name,
+            hour,
+            service_type,
+            jsonb_build_object(
+            'total',
+            CASE
+            WHEN service_type = 'AGENT' THEN total_requests_agent
+            ELSE total_requests_embedding
+            END,
+            'success',
+            CASE
+            WHEN service_type = 'AGENT' THEN success_count_agent
+            ELSE success_count_embedding
+            END,
+            'failure',
+            CASE
+            WHEN service_type = 'AGENT' THEN failure_count_agent
+            ELSE failure_count_embedding
+            END
+            ) AS hour_data
+        FROM aggregated_data
+            ),
+            chart_stats AS (
+        SELECT
+            model,
+            model_name,
+            json_agg(
+            json_build_object(
+            'hour', hour,
+            'total', (hour_data->>'total')::int,
+            'success', (hour_data->>'success')::int,
+            'failure', (hour_data->>'failure')::int
+            ) ORDER BY hour
+            ) AS data
+        FROM hourly_data
+        GROUP BY model, model_name
+            ),
+            table_stats AS (
+        SELECT
+            model,
+            model_name,
+            json_build_object(
+            'total', SUM((hour_data->>'total')::int),
+            'success', SUM((hour_data->>'success')::int),
+            'failure', SUM((hour_data->>'failure')::int)
+            ) AS total_data
+        FROM hourly_data
+        GROUP BY model, model_name
+            )
+        SELECT json_build_object(
+                       'chart_stats', json_agg(json_build_object(
+                        'model', c.model,
+                        'model_name', c.model_name,
+                        'data', c.data
+                                               )),
+                       'table_stats', json_agg(json_build_object(
+                        'model', t.model,
+                        'model_name', t.model_name,
+                        'data', t.total_data
+                                               ))
+               ) AS result
+        FROM chart_stats c
+                 FULL JOIN table_stats t ON c.model = t.model
+        ]]>
+    </select>
+
+    <select id="statWeek" resultType="String" parameterType="map">
+<![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+        ),
+             week_start_date AS (
+                 -- input_date 기준으로 해당 주의 일요일 계산
+                 SELECT (input_date - (EXTRACT(DOW FROM input_date) || ' days')::INTERVAL)::DATE AS week_start
+                 FROM target_date
+             ),
+             weekdays AS (
+                 SELECT generate_series(0, 6) AS weekday -- 0: Sunday, 6: Saturday
+             ),
+             models AS (
+                 SELECT DISTINCT
+                     model AS model,
+                     name AS model_name
+                 FROM
+                     engine
+                 WHERE
+                     TYPE = #{dataType}
+                   AND USE_YN = 'Y'
+             ),
+             token_types AS (
+                 SELECT 'I' AS token_type
+                 UNION ALL
+                 SELECT 'O' AS token_type
+             ),
+             all_combinations AS (
+                 SELECT
+                     m.model,
+                     m.model_name,
+                     w.weekday,
+                     t.token_type
+                 FROM
+                     models m
+                         CROSS JOIN weekdays w
+                         CROSS JOIN token_types t
+             ),
+             aggregated_data AS (
+                 SELECT
+                     a.model,
+                     a.model_name,
+                     (week_start_date.week_start + (a.weekday || ' days')::INTERVAL)::DATE AS date,
+            a.token_type,
+            COALESCE(SUM(r.tokens), 0) AS total_tokens
+        FROM
+            all_combinations a
+            CROSS JOIN week_start_date -- 주 시작일 포함
+            LEFT JOIN stat_chathub_raw r
+        ON a.model = r.model
+            AND a.token_type = r.token_type
+            AND EXTRACT(DOW FROM r.created_at) = a.weekday
+            AND r.created_at >= week_start_date.week_start
+            AND r.created_at < week_start_date.week_start + INTERVAL '7 days'
+        GROUP BY
+            a.model, a.model_name, a.weekday, a.token_type, week_start_date.week_start
+            ),
+            date_data_with_total AS (
+        SELECT
+            model,
+            model_name,
+            date,
+            jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+            'T',
+            COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+            COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+            ) AS date_data
+        FROM
+            aggregated_data
+        GROUP BY
+            model, model_name, date
+            ),
+            chart_stats AS (
+        SELECT
+            model,
+            model_name,
+            json_agg(
+            json_build_object(
+            'date', date,
+            'input', (date_data->>'I')::int,
+            'output', (date_data->>'O')::int,
+            'total', (date_data->>'T')::int
+            )
+            ORDER BY date
+            ) AS data
+        FROM
+            date_data_with_total
+        GROUP BY
+            model, model_name
+            ),
+            table_stats AS (
+        SELECT
+            model,
+            model_name,
+            json_build_object(
+            'input', SUM((date_data->>'I')::int),
+            'output', SUM((date_data->>'O')::int),
+            'total', SUM((date_data->>'T')::int)
+            ) AS data
+        FROM
+            date_data_with_total
+        GROUP BY
+            model, model_name
+            )
+        SELECT json_build_object(
+                       'chart_stats', json_agg(
+                        json_build_object(
+                                'model', c.model,
+                                'model_name', c.model_name,
+                                'data', c.data
+                        )
+                                      ),
+                       'table_stats', json_agg(
+                               json_build_object(
+                                       'model', t.model,
+                                       'model_name', t.model_name,
+                                       'data', t.data
+                               )
+                                      )
+               ) AS result
+        FROM
+            chart_stats c
+                FULL JOIN table_stats t
+                          ON c.model = t.model;
+        ]]>
+</select>
+    <select id="apiStatWeek" resultType="String" parameterType="map">
+<![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 설정
+        ),
+             week_start_date AS (
+                 -- input_date를 기준으로 해당 주의 일요일 계산
+                 SELECT (input_date - (EXTRACT(DOW FROM input_date) || ' days')::INTERVAL)::DATE AS week_start
+                 FROM target_date
+             ),
+             weekdays AS (
+                 SELECT generate_series(0, 6) AS weekday -- 0: Sunday, 6: Saturday
+             ),
+             models AS (
+                 SELECT DISTINCT
+                     model AS model,
+                     name AS model_name
+                 FROM
+                     engine
+                 WHERE
+                     TYPE = #{dataType}
+                   AND USE_YN = 'Y'
+             ),
+             all_combinations AS (
+                 SELECT
+                     m.model,
+                     m.model_name,
+                     w.weekday
+                 FROM
+                     models m
+                         CROSS JOIN weekdays w
+             ),
+             aggregated_requests AS (
+                 SELECT
+                     a.model,
+                     a.model_name,
+                     (week_start_date.week_start + (a.weekday || ' days')::INTERVAL)::DATE AS date,
+            COUNT(
+            CASE
+            WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+            THEN (r.seq || '-' || r.log_id)::TEXT
+            ELSE NULL
+            END
+            ) AS agent_total,
+            COUNT(
+            CASE
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+            THEN 1
+            ELSE NULL
+            END
+            ) AS embedding_total,
+            COUNT(
+            CASE
+            WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+            AND (r.seq || '-' || r.log_id)::TEXT IN (
+            SELECT (seq || '-' || log_id)::TEXT
+            FROM stat_chathub_raw
+            WHERE token_type = 'O'
+            AND created_at >= week_start_date.week_start
+            AND created_at < week_start_date.week_start + INTERVAL '7 days'
+            )
+            THEN (r.seq || '-' || r.log_id)::TEXT
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+            THEN '1'
+            ELSE NULL
+            END
+            ) AS success,
+            COUNT(
+            CASE
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+            THEN '1'
+            ELSE NULL
+            END
+            ) -
+            COUNT(
+            CASE
+            WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+            THEN '1'
+            ELSE NULL
+            END
+            ) AS embedding_failure,
+            COUNT(
+            DISTINCT CASE
+            WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+            AND (r.seq || '-' || r.log_id)::TEXT NOT IN (
+            SELECT (seq || '-' || log_id)::TEXT
+            FROM stat_chathub_raw
+            WHERE token_type = 'O'
+            AND created_at >= week_start_date.week_start
+            AND created_at < week_start_date.week_start + INTERVAL '7 days'
+            )
+            THEN (r.seq || '-' || r.log_id)::TEXT
+            ELSE NULL
+            END
+            ) AS agent_failure
+        FROM
+            all_combinations a
+            CROSS JOIN week_start_date -- 주 시작일 포함
+            LEFT JOIN stat_chathub_raw r
+        ON a.model = r.model
+            AND EXTRACT(DOW FROM r.created_at) = a.weekday
+            AND r.created_at >= week_start_date.week_start
+            AND r.created_at < week_start_date.week_start + INTERVAL '7 days'
+        GROUP BY
+            a.model, a.model_name, a.weekday, week_start_date.week_start
+            ),
+            final_aggregated_data AS (
+        SELECT
+            model,
+            model_name,
+            date,
+            (agent_total + embedding_total) AS total,
+            success,
+            (agent_failure + embedding_failure) AS failure
+        FROM
+            aggregated_requests
+            ),
+            date_data_with_total AS (
+        SELECT
+            model,
+            model_name,
+            date,
+            jsonb_build_object(
+            'total', total,
+            'success', success,
+            'failure', failure
+            ) AS date_data
+        FROM
+            final_aggregated_data
+            ),
+            chart_stats AS (
+        SELECT
+            model,
+            model_name,
+            json_agg(
+            json_build_object(
+            'date', date,
+            'total', (date_data->>'total')::int,
+            'success', (date_data->>'success')::int,
+            'failure', (date_data->>'failure')::int
+            )
+            ORDER BY date
+            ) AS data
+        FROM
+            date_data_with_total
+        GROUP BY
+            model, model_name
+            ),
+            table_stats AS (
+        SELECT
+            model,
+            model_name,
+            json_build_object(
+            'total', SUM((date_data->>'total')::int),
+            'success', SUM((date_data->>'success')::int),
+            'failure', SUM((date_data->>'failure')::int)
+            ) AS data
+        FROM
+            date_data_with_total
+        GROUP BY
+            model, model_name
+            )
+        SELECT json_build_object(
+                       'chart_stats', json_agg(
+                        json_build_object(
+                                'model', c.model,
+                                'model_name', c.model_name,
+                                'data', c.data
+                        )
+                                      ),
+                       'table_stats', json_agg(
+                               json_build_object(
+                                       'model', t.model,
+                                       'model_name', t.model_name,
+                                       'data', t.data
+                               )
+                                      )
+               ) AS result
+        FROM
+            chart_stats c
+                FULL JOIN table_stats t
+                          ON c.model = t.model
+        ]]>
+</select>
+    <select id="statMonth" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+        ),
+        days AS (
+            SELECT generate_series(
+                DATE_TRUNC('month', (SELECT input_date FROM target_date))::DATE,
+                (DATE_TRUNC('month', (SELECT input_date FROM target_date)) + INTERVAL '1 month - 1 day')::DATE,
+                INTERVAL '1 day'
+            )::DATE AS date
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,
+                name AS model_name
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        token_types AS (
+            SELECT 'I' AS token_type
+            UNION ALL
+            SELECT 'O' AS token_type
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                d.date,
+                t.token_type
+            FROM
+                models m
+                CROSS JOIN days d
+                CROSS JOIN token_types t
+        ),
+        aggregated_data AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.date,
+                a.token_type,
+                COALESCE(SUM(r.tokens), 0) AS total_tokens
+            FROM
+                all_combinations a
+                LEFT JOIN stat_chathub_raw r
+                ON a.model = r.model
+                AND a.token_type = r.token_type
+                AND DATE(r.created_at) = a.date
+            GROUP BY
+                a.model, a.model_name, a.date, a.token_type
+        ),
+        date_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                date,
+                jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+                    'T',
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+                ) AS date_data
+            FROM
+                aggregated_data
+            GROUP BY
+                model, model_name, date
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'date', date,
+                        'input', (date_data->>'I')::int,
+                        'output', (date_data->>'O')::int,
+                        'total', (date_data->>'T')::int
+                    )
+                    ORDER BY date
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'input', SUM((date_data->>'I')::int),
+                    'output', SUM((date_data->>'O')::int),
+                    'total', SUM((date_data->>'T')::int)
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+    ]]>
+    </select>
+
+    <select id="apiStatMonth" resultType="String" parameterType="map">
+<![CDATA[
+WITH target_date AS (
+    SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+),
+month_days AS (
+    SELECT generate_series(
+        DATE_TRUNC('month', (SELECT input_date FROM target_date))::DATE,
+        (DATE_TRUNC('month', (SELECT input_date FROM target_date)) + INTERVAL '1 month - 1 day')::DATE,
+        INTERVAL '1 day'
+    )::DATE AS day
+),
+models AS (
+    SELECT DISTINCT
+        model,
+        name AS model_name
+    FROM
+        engine
+    WHERE
+        TYPE = #{dataType}
+        AND USE_YN = 'Y'
+),
+all_combinations AS (
+    SELECT
+        m.model,
+        m.model_name,
+        d.day
+    FROM
+        models m
+        CROSS JOIN month_days d
+),
+aggregated_requests AS (
+    SELECT
+        a.model,
+        a.model_name,
+        a.day AS date,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+                THEN (r.seq || '-' || r.log_id)::text
+                ELSE NULL
+            END
+        ) AS agent_total,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+                THEN '1'
+                ELSE NULL
+            END
+        ) AS embedding_total,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+                     AND (r.seq || '-' || r.log_id)::text IN (
+                         SELECT (seq || '-' || log_id)::text
+                         FROM stat_chathub_raw
+                         WHERE token_type = 'O'
+                           AND DATE(created_at) = a.day
+                     )
+                THEN (r.seq || '-' || r.log_id)::text
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+                THEN '1'
+                ELSE NULL
+            END
+        ) AS success,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+                THEN '1'
+                ELSE NULL
+            END
+        ) -
+        COUNT(
+            CASE
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+                THEN '1'
+                ELSE NULL
+            END
+        ) AS embedding_failure,
+        COUNT(
+            DISTINCT CASE
+                WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+                     AND (r.seq || '-' || r.log_id)::text NOT IN (
+                         SELECT (seq || '-' || log_id)::text
+                         FROM stat_chathub_raw
+                         WHERE token_type = 'O'
+                           AND DATE(created_at) = a.day
+                     )
+                THEN (r.seq || '-' || r.log_id)::text
+                ELSE NULL
+            END
+        ) AS agent_failure
+    FROM
+        all_combinations a
+        LEFT JOIN stat_chathub_raw r
+        ON a.model = r.model
+           AND DATE(r.created_at) = a.day
+    GROUP BY
+        a.model, a.model_name, a.day
+),
+final_aggregated_data AS (
+    SELECT
+        model,
+        model_name,
+        date,
+        (agent_total + embedding_total) AS total,
+        success,
+        (agent_failure + embedding_failure) AS failure
+    FROM
+        aggregated_requests
+),
+date_data_with_total AS (
+    SELECT
+        model,
+        model_name,
+        date,
+        jsonb_build_object(
+            'total', total,
+            'success', success,
+            'failure', failure
+        ) AS date_data
+    FROM
+        final_aggregated_data
+),
+chart_stats AS (
+    SELECT
+        model,
+        model_name,
+        json_agg(
+            json_build_object(
+                'date', date,
+                'total', (date_data->>'total')::int,
+                'success', (date_data->>'success')::int,
+                'failure', (date_data->>'failure')::int
+            )
+            ORDER BY date
+        ) AS data
+    FROM
+        date_data_with_total
+    GROUP BY
+        model, model_name
+),
+table_stats AS (
+    SELECT
+        model,
+        model_name,
+        json_build_object(
+            'total', SUM((date_data->>'total')::int),
+            'success', SUM((date_data->>'success')::int),
+            'failure', SUM((date_data->>'failure')::int)
+        ) AS data
+    FROM
+        date_data_with_total
+    GROUP BY
+        model, model_name
+)
+SELECT json_build_object(
+           'chart_stats', json_agg(
+               json_build_object(
+                   'model', c.model,
+                   'model_name', c.model_name,
+                   'data', c.data
+               )
+           ),
+           'table_stats', json_agg(
+               json_build_object(
+                   'model', t.model,
+                   'model_name', t.model_name,
+                   'data', t.data
+               )
+           )
+       ) AS result
+FROM
+    chart_stats c
+FULL JOIN table_stats t
+ON c.model = t.model;
+]]>
+</select>
+
+    <select id="statPeriod" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_range AS (
+            SELECT #{fromDate}::DATE AS start_date, -- 시작일
+                   #{toDate}::DATE AS end_date     -- 종료일
+        ),
+        days AS (
+            SELECT generate_series(
+                (SELECT start_date FROM target_range),
+                (SELECT end_date FROM target_range),
+                INTERVAL '1 day'
+            )::DATE AS date
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,         -- model 컬럼
+                name AS model_name -- name 컬럼을 model_name으로 사용
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        token_types AS (
+            SELECT 'I' AS token_type
+            UNION ALL
+            SELECT 'O' AS token_type
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                d.date,
+                t.token_type
+            FROM
+                models m
+                CROSS JOIN days d
+                CROSS JOIN token_types t
+        ),
+        aggregated_data AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.date,
+                a.token_type,
+                COALESCE(SUM(r.tokens), 0) AS total_tokens
+            FROM
+                all_combinations a
+                LEFT JOIN stat_chathub_raw r
+                ON a.model = r.model
+                AND a.token_type = r.token_type
+                AND DATE(r.created_at) = a.date
+            GROUP BY
+                a.model, a.model_name, a.date, a.token_type
+        ),
+        date_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                date,
+                jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+                    'T',
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+                ) AS date_data
+            FROM
+                aggregated_data
+            GROUP BY
+                model, model_name, date
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'date', date,
+                        'input', (date_data->>'I')::int,
+                        'output', (date_data->>'O')::int,
+                        'total', (date_data->>'T')::int
+                    )
+                    ORDER BY date
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'input', SUM((date_data->>'I')::int),
+                    'output', SUM((date_data->>'O')::int),
+                    'total', SUM((date_data->>'T')::int)
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+    ]]>
+    </select>
+
+<select id="apiStatPeriod" resultType="String" parameterType="map">
+<![CDATA[
+WITH target_date AS (
+    SELECT #{fromDate}::DATE AS input_start_date, #{toDate}::DATE AS input_end_date -- 시작일과 종료일
+),
+period_days AS (
+    SELECT generate_series(
+        (SELECT input_start_date FROM target_date),
+        (SELECT input_end_date FROM target_date),
+        INTERVAL '1 day'
+    )::DATE AS day
+),
+models AS (
+    SELECT DISTINCT
+        model,
+        name AS model_name
+    FROM
+        engine
+    WHERE
+        TYPE = #{dataType}
+        AND USE_YN = 'Y'
+),
+all_combinations AS (
+    SELECT
+        m.model,
+        m.model_name,
+        d.day
+    FROM
+        models m
+        CROSS JOIN period_days d
+),
+aggregated_requests AS (
+    SELECT
+        a.model,
+        a.model_name,
+        a.day AS date,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+                THEN (r.seq || '-' || r.log_id)::text
+                ELSE NULL
+            END
+        ) AS agent_total,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+                THEN '1'
+                ELSE NULL
+            END
+        ) AS embedding_total,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+                     AND (r.seq || '-' || r.log_id)::text IN (
+                         SELECT (seq || '-' || log_id)::text
+                         FROM stat_chathub_raw
+                         WHERE token_type = 'O'
+                           AND DATE(created_at) = a.day
+                     )
+                THEN (r.seq || '-' || r.log_id)::text
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+                THEN '1'
+                ELSE NULL
+            END
+        ) AS success,
+        COUNT(
+            CASE
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RQ'
+                THEN '1'
+                ELSE NULL
+            END
+        ) -
+        COUNT(
+            CASE
+                WHEN r.service_type = 'EMBEDDING' AND r.token_type = 'RS'
+                THEN '1'
+                ELSE NULL
+            END
+        ) AS embedding_failure,
+        COUNT(
+            DISTINCT CASE
+                WHEN r.service_type = 'AGENT' AND r.token_type = 'I'
+                     AND (r.seq || '-' || r.log_id)::text NOT IN (
+                         SELECT (seq || '-' || log_id)::text
+                         FROM stat_chathub_raw
+                         WHERE token_type = 'O'
+                           AND DATE(created_at) = a.day
+                     )
+                THEN (r.seq || '-' || r.log_id)::text
+                ELSE NULL
+            END
+        ) AS agent_failure
+    FROM
+        all_combinations a
+        LEFT JOIN stat_chathub_raw r
+        ON a.model = r.model
+           AND DATE(r.created_at) = a.day
+    GROUP BY
+        a.model, a.model_name, a.day
+),
+final_aggregated_data AS (
+    SELECT
+        model,
+        model_name,
+        date,
+        (agent_total + embedding_total) AS total,
+        success,
+        (agent_failure + embedding_failure) AS failure
+    FROM
+        aggregated_requests
+),
+date_data_with_total AS (
+    SELECT
+        model,
+        model_name,
+        date,
+        jsonb_build_object(
+            'total', total,
+            'success', success,
+            'failure', failure
+        ) AS date_data
+    FROM
+        final_aggregated_data
+),
+chart_stats AS (
+    SELECT
+        model,
+        model_name,
+        json_agg(
+            json_build_object(
+                'date', date,
+                'total', (date_data->>'total')::int,
+                'success', (date_data->>'success')::int,
+                'failure', (date_data->>'failure')::int
+            )
+            ORDER BY date
+        ) AS data
+    FROM
+        date_data_with_total
+    GROUP BY
+        model, model_name
+),
+table_stats AS (
+    SELECT
+        model,
+        model_name,
+        json_build_object(
+            'total', SUM((date_data->>'total')::int),
+            'success', SUM((date_data->>'success')::int),
+            'failure', SUM((date_data->>'failure')::int)
+        ) AS data
+    FROM
+        date_data_with_total
+    GROUP BY
+        model, model_name
+)
+SELECT json_build_object(
+           'chart_stats', json_agg(
+               json_build_object(
+                   'model', c.model,
+                   'model_name', c.model_name,
+                   'data', c.data
+               )
+           ),
+           'table_stats', json_agg(
+               json_build_object(
+                   'model', t.model,
+                   'model_name', t.model_name,
+                   'data', t.data
+               )
+           )
+       ) AS result
+FROM
+    chart_stats c
+FULL JOIN table_stats t
+ON c.model = t.model;
+]]>
+</select>
+
+    <select id="statDayRanker" resultType="String" parameterType="map">
+    <![CDATA[
+            WITH target_date AS (
+                SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+            ),
+                 hours AS (
+                     SELECT generate_series(0, 23) AS hour
+                ),
+                models AS (
+            SELECT DISTINCT
+                model,         -- 실제 model 컬럼
+                name AS model_name -- name 컬럼을 model_name으로 사용
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+              AND USE_YN = 'Y'
+                ),
+                token_types AS (
+            SELECT 'I' AS token_type
+            UNION ALL
+            SELECT 'O' AS token_type
+                ),
+                all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                h.hour,
+                t.token_type
+            FROM
+                models m
+                CROSS JOIN hours h
+                CROSS JOIN token_types t
+                ),
+                aggregated_data AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.hour,
+                a.token_type,
+                COALESCE(SUM(r.tokens), 0) AS total_tokens
+            FROM
+                all_combinations a
+                LEFT JOIN stat_ranker_raw r
+            ON a.model = r.model
+                AND a.token_type = r.token_type
+                AND DATE_PART('hour', r.created_at) = a.hour
+                AND r.created_at >= (SELECT input_date FROM target_date)
+                AND r.created_at < (SELECT input_date FROM target_date) + INTERVAL '1 day'
+            GROUP BY
+                a.model, a.model_name, a.hour, a.token_type
+                ),
+                hourly_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                hour,
+                jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+                'T',
+                COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+                COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+                ) AS hour_data
+            FROM
+                aggregated_data
+            GROUP BY
+                model, model_name, hour
+                ),
+                chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                json_build_object(
+                'hour', hour,
+                'input', (hour_data->>'I')::int,
+                'output', (hour_data->>'O')::int,
+                'total', (hour_data->>'T')::int
+                )
+                ORDER BY hour
+                ) AS data
+            FROM
+                hourly_data_with_total
+            GROUP BY
+                model, model_name
+                ),
+                table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                'input', SUM((hour_data->>'I')::int),
+                'output', SUM((hour_data->>'O')::int),
+                'total', SUM((hour_data->>'T')::int)
+                ) AS total_data
+            FROM
+                hourly_data_with_total
+            GROUP BY
+                model, model_name
+                )
+            SELECT json_build_object(
+                           'chart_stats',
+                           json_agg(
+                                   json_build_object(
+                                           'model', c.model,
+                                           'model_name', c.model_name,
+                                           'data', c.data
+                                   )
+                           ),
+                           'table_stats',
+                           json_agg(
+                                   json_build_object(
+                                           'model', t.model,
+                                           'model_name', t.model_name,
+                                           'data', t.total_data
+                                   )
+                           )
+                   ) AS result
+            FROM
+                chart_stats c
+                    FULL JOIN table_stats t
+                              ON c.model = t.model;
+            ]]>
+    </select>
+    <select id="apiStatDayRanker" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date
+        ),  -- 특정 날짜를 이곳에 설정
+        hours AS (
+            SELECT generate_series(0, 23) AS hour
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,         -- 실제 model 컬럼
+                name AS model_name -- name 컬럼을 model_name으로 사용
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                h.hour
+            FROM
+                models m
+                CROSS JOIN hours h
+        ),
+        aggregated_data AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.hour,
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RQ' THEN r.step
+                END) AS total_requests,  -- RQ를 기준으로 전체 요청 수 계산
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RS' THEN r.step
+                END) AS success_count,  -- RS를 기준으로 성공 요청 수 계산
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RQ' THEN r.step
+                END) - COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RS' THEN r.step
+                END) AS failure_count  -- 실패 요청 수 = 전체 요청 - 성공 요청
+            FROM
+                all_combinations a
+                LEFT JOIN stat_ranker_raw r
+                ON a.model = r.model
+                AND DATE_PART('hour', r.created_at) = a.hour
+                AND r.created_at >= (SELECT input_date FROM target_date)
+                AND r.created_at < (SELECT input_date FROM target_date) + INTERVAL '1 day'
+            GROUP BY
+                a.model, a.model_name, a.hour
+        ),
+        hourly_data AS (
+            SELECT
+                model,
+                model_name,
+                hour,
+                jsonb_build_object(
+                    'total', total_requests,
+                    'success', success_count,
+                    'failure', failure_count
+                ) AS hour_data
+            FROM
+                aggregated_data
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'hour', hour,
+                        'total', (hour_data->>'total')::int,
+                        'success', (hour_data->>'success')::int,
+                        'failure', (hour_data->>'failure')::int
+                    )
+                    ORDER BY hour
+                ) AS data
+            FROM
+                hourly_data
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'total', SUM((hour_data->>'total')::int),
+                    'success', SUM((hour_data->>'success')::int),
+                    'failure', SUM((hour_data->>'failure')::int)
+                ) AS total_data
+            FROM
+                hourly_data
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.total_data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+    ]]>
+    </select>
+<select id="statWeekRanker" resultType="String" parameterType="map">
+<![CDATA[
+            WITH target_date AS (
+                SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+            ),
+            week_start_date AS (
+                -- input_date 기준으로 주의 첫날(일요일)을 계산
+                SELECT (input_date - (EXTRACT(DOW FROM input_date) || ' days')::INTERVAL)::DATE AS week_start
+                FROM target_date
+            ),
+            weekdays AS (
+                SELECT generate_series(0, 6) AS weekday -- 0: Sunday, 6: Saturday
+            ),
+            models AS (
+                SELECT DISTINCT
+                    model,
+                    name AS model_name
+                FROM
+                    engine
+                WHERE
+                    TYPE = #{dataType}
+                    AND USE_YN = 'Y'
+            ),
+            token_types AS (
+                SELECT 'I' AS token_type
+                UNION ALL
+                SELECT 'O' AS token_type
+            ),
+            all_combinations AS (
+                SELECT
+                    m.model,
+                    m.model_name,
+                    w.weekday,
+                    t.token_type
+                FROM
+                    models m
+                    CROSS JOIN weekdays w
+                    CROSS JOIN token_types t
+            ),
+            aggregated_data AS (
+                SELECT
+                    a.model,
+                    a.model_name,
+                    (week_start_date.week_start + (a.weekday || ' days')::INTERVAL)::DATE AS date,
+                    a.token_type,
+                    COALESCE(SUM(r.tokens), 0) AS total_tokens
+                FROM
+                    all_combinations a
+                CROSS JOIN week_start_date -- 주 시작일 포함
+                LEFT JOIN stat_ranker_raw r
+                ON a.model = r.model
+                   AND a.token_type = r.token_type
+                   AND EXTRACT(DOW FROM r.created_at) = a.weekday
+                   AND r.created_at >= week_start_date.week_start
+                   AND r.created_at < week_start_date.week_start + INTERVAL '7 days'
+                GROUP BY
+                    a.model, a.model_name, a.weekday, a.token_type, week_start_date.week_start
+            ),
+            date_data_with_total AS (
+                SELECT
+                    model,
+                    model_name,
+                    date,
+                    jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+                        'T',
+                        COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+                        COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+                    ) AS date_data
+                FROM
+                    aggregated_data
+                GROUP BY
+                    model, model_name, date
+            ),
+            chart_stats AS (
+                SELECT
+                    model,
+                    model_name,
+                    json_agg(
+                        json_build_object(
+                            'date', date,
+                            'input', (date_data->>'I')::int,
+                            'output', (date_data->>'O')::int,
+                            'total', (date_data->>'T')::int
+                        )
+                        ORDER BY date
+                    ) AS data
+                FROM
+                    date_data_with_total
+                GROUP BY
+                    model, model_name
+            ),
+            table_stats AS (
+                SELECT
+                    model,
+                    model_name,
+                    json_build_object(
+                        'input', SUM((date_data->>'I')::int),
+                        'output', SUM((date_data->>'O')::int),
+                        'total', SUM((date_data->>'T')::int)
+                    ) AS data
+                FROM
+                    date_data_with_total
+                GROUP BY
+                    model, model_name
+            )
+            SELECT json_build_object(
+                       'chart_stats', json_agg(
+                           json_build_object(
+                               'model', c.model,
+                               'model_name', c.model_name,
+                               'data', c.data
+                           )
+                       ),
+                       'table_stats', json_agg(
+                           json_build_object(
+                               'model', t.model,
+                               'model_name', t.model_name,
+                               'data', t.data
+                           )
+                       )
+                   ) AS result
+            FROM
+                chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+]]>
+</select>
+
+<select id="apiStatWeekRanker" resultType="String" parameterType="map">
+<![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+        ),
+        week_start_date AS (
+            -- input_date 기준으로 주의 첫날(일요일)을 계산
+            SELECT (input_date - (EXTRACT(DOW FROM input_date) || ' days')::INTERVAL)::DATE AS week_start
+            FROM target_date
+        ),
+        weekdays AS (
+            SELECT generate_series(0, 6) AS weekday -- 0: Sunday, 6: Saturday
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,
+                name AS model_name
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                w.weekday
+            FROM
+                models m
+                CROSS JOIN weekdays w
+        ),
+        aggregated_requests AS (
+            SELECT
+                a.model,
+                a.model_name,
+                (week_start_date.week_start + (a.weekday || ' days')::INTERVAL)::DATE AS date,
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RQ' THEN r.step
+                END) AS total,  -- RQ를 기준으로 전체 요청 수 계산
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RS' THEN r.step
+                END) AS success, -- RS를 기준으로 성공 요청 수 계산
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RQ' THEN r.step
+                END) - COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RS' THEN r.step
+                END) AS failure -- 실패 요청 수 = 전체 요청 - 성공 요청
+            FROM
+                all_combinations a
+                CROSS JOIN week_start_date -- 주 시작일 포함
+                LEFT JOIN stat_ranker_raw r
+                ON a.model = r.model
+                AND EXTRACT(DOW FROM r.created_at) = a.weekday
+                AND r.created_at >= week_start_date.week_start
+                AND r.created_at < week_start_date.week_start + INTERVAL '7 days'
+            GROUP BY
+                a.model, a.model_name, a.weekday, week_start_date.week_start
+        ),
+        date_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                date,
+                jsonb_build_object(
+                    'total', total,
+                    'success', success,
+                    'failure', failure
+                ) AS date_data
+            FROM
+                aggregated_requests
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'date', date,
+                        'total', (date_data->>'total')::int,
+                        'success', (date_data->>'success')::int,
+                        'failure', (date_data->>'failure')::int
+                    )
+                    ORDER BY date
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'total', SUM((date_data->>'total')::int),
+                    'success', SUM((date_data->>'success')::int),
+                    'failure', SUM((date_data->>'failure')::int)
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+]]>
+</select>
+
+    <select id="statMonthRanker" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+        ),
+        days AS (
+            SELECT generate_series(
+                DATE_TRUNC('month', (SELECT input_date FROM target_date))::DATE,
+                (DATE_TRUNC('month', (SELECT input_date FROM target_date)) + INTERVAL '1 month - 1 day')::DATE,
+                INTERVAL '1 day'
+            )::DATE AS date
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,
+                name AS model_name
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        token_types AS (
+            SELECT 'I' AS token_type
+            UNION ALL
+            SELECT 'O' AS token_type
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                d.date,
+                t.token_type
+            FROM
+                models m
+                CROSS JOIN days d
+                CROSS JOIN token_types t
+        ),
+        aggregated_data AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.date,
+                a.token_type,
+                COALESCE(SUM(r.tokens), 0) AS total_tokens
+            FROM
+                all_combinations a
+                LEFT JOIN stat_ranker_raw r
+                ON a.model = r.model
+                AND a.token_type = r.token_type
+                AND DATE(r.created_at) = a.date
+            GROUP BY
+                a.model, a.model_name, a.date, a.token_type
+        ),
+        date_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                date,
+                jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+                    'T',
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+                ) AS date_data
+            FROM
+                aggregated_data
+            GROUP BY
+                model, model_name, date
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'date', date,
+                        'input', (date_data->>'I')::int,
+                        'output', (date_data->>'O')::int,
+                        'total', (date_data->>'T')::int
+                    )
+                    ORDER BY date
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'input', SUM((date_data->>'I')::int),
+                    'output', SUM((date_data->>'O')::int),
+                    'total', SUM((date_data->>'T')::int)
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+    ]]>
+    </select>
+    <select id="apiStatMonthRanker" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_date AS (
+            SELECT #{fromDate}::DATE AS input_date -- 특정 날짜를 이곳에 설정
+        ),
+        days AS (
+            SELECT generate_series(
+                DATE_TRUNC('month', (SELECT input_date FROM target_date))::DATE,
+                (DATE_TRUNC('month', (SELECT input_date FROM target_date)) + INTERVAL '1 month - 1 day')::DATE,
+                INTERVAL '1 day'
+            )::DATE AS date
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,
+                name AS model_name
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                d.date
+            FROM
+                models m
+                CROSS JOIN days d
+        ),
+        aggregated_requests AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.date,
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RQ' THEN r.step
+                END) AS total,  -- token_type = 'RQ' 기준으로 전체 요청 수 계산
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RS' THEN r.step
+                END) AS success,  -- token_type = 'RS' 기준으로 성공 요청 수 계산
+                COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RQ' THEN r.step
+                END) - COUNT(DISTINCT CASE
+                    WHEN r.token_type = 'RS' THEN r.step
+                END) AS failure  -- 실패 요청 수 = 전체 요청 - 성공 요청
+            FROM
+                all_combinations a
+                LEFT JOIN stat_ranker_raw r
+                ON a.model = r.model
+                AND DATE(r.created_at) = a.date
+            GROUP BY
+                a.model, a.model_name, a.date
+        ),
+        date_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                date,
+                jsonb_build_object(
+                    'total', total,
+                    'success', success,
+                    'failure', failure
+                ) AS date_data
+            FROM
+                aggregated_requests
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'date', date,
+                        'total', (date_data->>'total')::int,
+                        'success', (date_data->>'success')::int,
+                        'failure', (date_data->>'failure')::int
+                    )
+                    ORDER BY date
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'total', SUM((date_data->>'total')::int),
+                    'success', SUM((date_data->>'success')::int),
+                    'failure', SUM((date_data->>'failure')::int)
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+    ]]>
+    </select>
+    <select id="statPeriodRanker" resultType="String" parameterType="map">
+    <![CDATA[
+        WITH target_range AS (
+            SELECT #{fromDate}::DATE AS start_date, -- 시작일
+                   #{toDate}::DATE AS end_date -- 종료일
+        ),
+        days AS (
+            SELECT generate_series(
+                (SELECT start_date FROM target_range),
+                (SELECT end_date FROM target_range),
+                INTERVAL '1 day'
+            )::DATE AS date
+        ),
+        models AS (
+            SELECT DISTINCT
+                model,
+                name AS model_name
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+                AND USE_YN = 'Y'
+        ),
+        token_types AS (
+            SELECT 'I' AS token_type
+            UNION ALL
+            SELECT 'O' AS token_type
+        ),
+        all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                d.date,
+                t.token_type
+            FROM
+                models m
+                CROSS JOIN days d
+                CROSS JOIN token_types t
+        ),
+        aggregated_data AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.date,
+                a.token_type,
+                COALESCE(SUM(r.tokens), 0) AS total_tokens
+            FROM
+                all_combinations a
+                LEFT JOIN stat_ranker_raw r
+                ON a.model = r.model
+                AND a.token_type = r.token_type
+                AND DATE(r.created_at) = a.date
+            GROUP BY
+                a.model, a.model_name, a.date, a.token_type
+        ),
+        date_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                date,
+                jsonb_object_agg(token_type, total_tokens) || jsonb_build_object(
+                    'T',
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'I'), 0) +
+                    COALESCE(SUM(total_tokens) FILTER (WHERE token_type = 'O'), 0)
+                ) AS date_data
+            FROM
+                aggregated_data
+            GROUP BY
+                model, model_name, date
+        ),
+        chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                    json_build_object(
+                        'date', date,
+                        'input', (date_data->>'I')::int,
+                        'output', (date_data->>'O')::int,
+                        'total', (date_data->>'T')::int
+                    )
+                    ORDER BY date
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        ),
+        table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                    'input', SUM((date_data->>'I')::int),
+                    'output', SUM((date_data->>'O')::int),
+                    'total', SUM((date_data->>'T')::int)
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+        )
+        SELECT json_build_object(
+                   'chart_stats', json_agg(
+                       json_build_object(
+                           'model', c.model,
+                           'model_name', c.model_name,
+                           'data', c.data
+                       )
+                   ),
+                   'table_stats', json_agg(
+                       json_build_object(
+                           'model', t.model,
+                           'model_name', t.model_name,
+                           'data', t.data
+                       )
+                   )
+               ) AS result
+        FROM
+            chart_stats c
+            FULL JOIN table_stats t
+            ON c.model = t.model;
+    ]]>
+    </select>
+    <select id="apiStatPeriodRanker" resultType="String" parameterType="map">
+    <![CDATA[
+            WITH target_range AS (
+                SELECT #{fromDate}::DATE AS start_date, -- 시작일
+                        #{toDate}::DATE AS end_date -- 종료일
+            ),
+                 days AS (
+                     SELECT generate_series(
+                                    (SELECT start_date FROM target_range),
+                                    (SELECT end_date FROM target_range),
+                                    INTERVAL '1 day'
+                            )::DATE AS date
+                ),
+                models AS (
+            SELECT DISTINCT
+                model,
+                name AS model_name
+            FROM
+                engine
+            WHERE
+                TYPE = #{dataType}
+              AND USE_YN = 'Y'
+                ),
+                all_combinations AS (
+            SELECT
+                m.model,
+                m.model_name,
+                d.date
+            FROM
+                models m
+                CROSS JOIN days d
+                ),
+                aggregated_requests AS (
+            SELECT
+                a.model,
+                a.model_name,
+                a.date,
+                COUNT(DISTINCT CASE WHEN r.token_type = 'RQ' THEN r.step END) AS total,  -- token_type = 'RQ' 기준으로 전체 요청 계산
+                COUNT(DISTINCT CASE WHEN r.token_type = 'RS' THEN r.step END) AS success,  -- token_type = 'RS' 기준으로 성공 요청 계산
+                COUNT(DISTINCT CASE WHEN r.token_type = 'RQ' THEN r.step END) - COUNT(DISTINCT CASE WHEN r.token_type = 'RS' THEN r.step END) AS failure  -- 실패 요청 계산
+            FROM
+                all_combinations a
+                LEFT JOIN stat_ranker_raw r
+            ON a.model = r.model
+                AND DATE(r.created_at) = a.date
+            GROUP BY
+                a.model, a.model_name, a.date
+                ),
+                date_data_with_total AS (
+            SELECT
+                model,
+                model_name,
+                date,
+                jsonb_build_object(
+                'total', total,
+                'success', success,
+                'failure', failure
+                ) AS date_data
+            FROM
+                aggregated_requests
+                ),
+                chart_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_agg(
+                json_build_object(
+                'date', date,
+                'total', (date_data->>'total')::int,
+                'success', (date_data->>'success')::int,
+                'failure', (date_data->>'failure')::int
+                )
+                ORDER BY date
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+                ),
+                table_stats AS (
+            SELECT
+                model,
+                model_name,
+                json_build_object(
+                'total', SUM((date_data->>'total')::int),
+                'success', SUM((date_data->>'success')::int),
+                'failure', SUM((date_data->>'failure')::int)
+                ) AS data
+            FROM
+                date_data_with_total
+            GROUP BY
+                model, model_name
+                )
+            SELECT json_build_object(
+                           'chart_stats', json_agg(
+                            json_build_object(
+                                    'model', c.model,
+                                    'model_name', c.model_name,
+                                    'data', c.data
+                            )
+                                          ),
+                           'table_stats', json_agg(
+                                   json_build_object(
+                                           'model', t.model,
+                                           'model_name', t.model_name,
+                                           'data', t.data
+                                   )
+                                          )
+                   ) AS result
+            FROM
+                chart_stats c
+                    FULL JOIN table_stats t
+                              ON c.model = t.model;
+            ]]>
+    </select>
+
+
+
+
+</mapper>

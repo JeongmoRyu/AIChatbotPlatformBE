@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package rag_service.rag_module;
+
+service RagService {
+  rpc ChatHandler (stream ChatRequest) returns (stream ChatResponse);
+  rpc WeatherForecast (FcstRequest) returns (FcstResponse);
+  rpc ElasticEndpoint (ElasticIndex) returns (ElasticResponse);
+  rpc ChatSummarize (SummRequest) returns (SummResponse);
+  rpc Echo (Message) returns (Message);
+};
+
+// common structure for llm & embedding
+message APIKey {
+  string name = 1;
+  string key = 2;
+  string version = 3;
+  string endpoint = 4;
+}
+
+message Chat {
+  string input = 1;
+  string output = 2;
+}
+
+message LLMParameter {
+  float temperature = 1;
+  float top_p = 2;
+  float presence_penalty = 3;
+  float frequency_penalty = 4;
+  int32 max_tokens = 5;
+  string system_prompt = 6;
+  string user_prompt = 7;
+
+  optional float top_k = 8;
+}
+
+// rpc : ChatHandler -> Config
+// must send llm config information before chat
+message ChatConfig{
+  int64 room_id = 1;
+  repeated LLMEngine llm_engines = 2;
+  repeated LLMNode llm_nodes = 3;
+  APIKey embedding_key = 4;
+  ESConfig es_config = 5;
+  repeated PreInfo pre_info = 6;
+  repeated int32 default_pre_info = 7;
+  repeated Function functions = 8;
+  optional MemoryType memory_type = 9;
+  optional int32 memory_window = 10;
+  repeated Chat chat_history = 11;
+
+  message LLMEngine { //list of llm engines (api keys)
+    int32 model_idx = 1;
+    string provider = 2;
+    optional string model_type = 3;
+    optional APIKey key = 4;
+  }
+
+  message LLMNode { // configs for each LLM agent nodes
+    enum NodeIndex {
+      NULL = 0;
+      QUERY_REWRITE = 1;
+      FUNCTION_CALL = 2;
+      NORMAL_CHAT = 3;
+      RAG_CHAT = 4;
+    }
+    NodeIndex node_idx = 1;
+    // engine_indices must match idx of LLMEngine
+    int32 retries = 2;
+    LLMParameter model_params = 3;
+    int32 main_model_idx = 4;
+    int32 fallback_model_idx = 5;
+
+    bool disable_node = 6;
+  }
+  message ESConfig { // can be generalized as retriever config (later)
+    // config for es connection
+    int32 retries = 1;
+    string api_key = 2;
+    string url = 3;
+    string index1 = 4;
+    string index2 = 5;
+
+    // es retrieval config
+    int32 top_k = 6;
+    int32 knn_k = 7;
+    int32 num_candidates = 8;
+
+    int32 rrf_rank_constant = 9;
+    float rrf_sparse_weight=10;
+    float rrf_dense_weight=11;
+
+    bool use_vector_reranker=12;
+    bool use_sparse_vector=13;
+    bool use_dense_vector=14;
+  }
+  message PreInfo {
+    int32 idx = 1;
+    string data = 2;
+  }
+
+  message Function {
+    string name = 1;
+    string description = 2;
+    repeated int32 pre_info_type = 3;
+    string filter_prefix = 4;
+  }
+  // chat history
+  enum MemoryType {
+    BUFFER_MEMORY = 0;
+    WINDOW_MEMORY = 1;
+  }
+}
+
+// rpc : ChatHandler -> ClientMessage
+// client message must contain relevant documents
+message ChatRequest {
+  oneof msg_type {
+    ChatConfig config = 1;
+    string msg = 2;
+  }
+  optional int64 sequence = 3;
+}
+
+message Status {
+  enum Code {
+    NULL = 0;
+    CFG_RECEIVED = 10;
+    AGENT_INIT = 11;
+    MEMORY_LOAD = 12;
+
+    MSG_RECEIVED = 20;
+
+    STREAM_START = 30;
+    STREAM_END = 31;
+    MEMORY_SAVE = 32;
+
+    ERROR = 500;
+    BAD_PROMPT = 501;
+  }
+  Code code = 1;
+  optional string info = 2;
+}
+
+message ChatResponse {
+  oneof msg_type {
+    string msg = 1;
+    Status status = 2;
+  }
+  int64 sequence = 3;
+}
+
+message FcstRequest {
+  float longitude = 1;
+  float latitude = 2;
+  string target_date = 3;
+  string target_time = 4;
+}
+
+message FcstResponse {
+  string time = 1;
+  string area = 2;
+  repeated FcstInfo info = 3;
+
+  message FcstInfo {
+    string field = 1;
+    string value = 2;
+  }
+}
+
+message ElasticIndex {
+  enum Endpoint {
+    NULL = 0;
+    IDX_ONE = 1; // wiki
+    IDX_TWO = 2; // wiki-1
+  }
+  Endpoint endpoint_idx = 1;
+}
+
+message ElasticResponse {
+  enum Status {
+    NULL = 0;
+    SUCCESS = 1;
+    ERROR = 2;
+  }
+  Status result = 1;
+}
+
+message SummRequest {
+  APIKey api_key = 1;
+  LLMParameter llm_params = 2;
+  repeated Chat chat_history = 3;
+}
+
+message SummResponse {
+  string response = 1;
+}
+
+message Message { // used for debugging
+  string msg = 1;
+}

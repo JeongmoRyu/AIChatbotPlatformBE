@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.mybatis.mapper.ResourceCheckMapper">
+    <select id="selectGabageFiles" resultType="ai.maum.chathub.api.file.entity.SourceFileEntity">
+        SELECT id, user_Id, user_name, org_name, name, path, size, type, created_at
+        FROM source_file sf
+        WHERE id NOT IN (
+            SELECT CASE
+                       WHEN file_id ~ '^[0-9]+$'
+				   	THEN file_id::BIGINT
+                       ELSE 0
+                       END AS file_id
+            FROM (
+                     SELECT imgfile_id::text AS file_id
+                     FROM chatbot_info
+                     WHERE imgfile_id <![CDATA[>]]> ''
+                     UNION ALL
+                     SELECT question_image::text
+                     FROM base_member_function bmf
+                     WHERE question_image <![CDATA[>]]>  ''
+                     UNION ALL
+                     SELECT file_id::text
+                     FROM function_file ff
+                     WHERE function_id IN (
+                         SELECT id
+                         FROM base_member_function bmf
+                         WHERE use_yn = 'Y'
+                     )
+                 )
+        )
+    </select>
+    <select id="selectValidESFilterPreFix" resultType="String">
+        WITH parsed_values AS (
+            SELECT chatbot_id,
+                   unnest(string_to_array(trim(both '[]' FROM etc_param0), ','))::BIGINT AS param_value
+              FROM chatbot_detail_llm
+             WHERE etc_param0 IS NOT NULL
+               AND etc_param0 <![CDATA[<>]]> ''
+               AND etc_param0 ~ '^\[[0-9, ]+\]$'  -- 리스트 형태로만 필터링 (숫자와 쉼표, 공백만 있는지 확인)
+        )
+        SELECT chatbot_id || '_' || param_value AS result
+          FROM parsed_values
+        UNION ALL
+        SELECT filter_prefix
+        FROM base_member_function
+        WHERE filter_prefix > ''
+    </select>
+    <select id="selectElasticEngineList" resultType="ai.maum.chathub.mybatis.vo.ElasticVO">
+        SELECT id, url, apik, parameters, name, created_at, updated_at, index1, index2
+        FROM base_elastic
+    </select>
+</mapper>

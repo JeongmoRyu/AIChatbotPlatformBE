@@ -1,0 +1,82 @@
+<configuration>
+    <!-- 프로필 정보 불러오기 -->
+    <springProperty scope="local,local2" name="PROFILE" source="spring.profiles.active" />
+
+    <!-- 로그 출력 패턴 정의 -->
+    <property name="LOG_PATTERN" value="%highlight(%-5level) %cyan(%d{yyyy-MM-dd HH:mm:ss}) %yellow([%thread]) %green([%logger{0}:%line]) - %msg%n" />
+
+    <!-- 콘솔 로그 출력 정의 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 로컬 및 개발 환경 정의 -->
+    <springProfile name="local,local2,dev,docker-dev">
+        <!-- 콘솔 적용 -->
+        <root level="info">
+            <appender-ref ref="CONSOLE" />
+        </root>
+        <logger name="ai.maum" level="debug"/>
+        <logger name="org.hibernate.SQL" level="debug"/>
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="trace"/>
+    </springProfile>
+
+    <!-- 스테이징 및 운영 환경 정의 -->
+    <springProfile name="docker,stg,prd">
+        <!-- 로그 설정 정보 불러오기 -->
+        <springProperty scope="local" name="INFO_PATH" source="service.log.info.path" />
+        <springProperty scope="local" name="ERR_PATH" source="service.log.err.path" />
+
+
+        <!-- [INFO]로그 파일 출력 정의 -->
+        <appender name="FILE_INFO" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${INFO_PATH}/info.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${INFO_PATH}/info_%d{yyyy-MM-dd}_%i.log</fileNamePattern>
+                <!-- 로그 파일 최대 크기 설정 -->
+                <maxFileSize>10MB</maxFileSize>
+                <!-- 로그 파일 보관일 설정 -->
+                <maxHistory>30</maxHistory>
+            </rollingPolicy>
+            <!-- INFO 레벨만 출력 -->
+            <filter class="ch.qos.logback.classic.filter.LevelFilter">
+                <level>INFO</level>
+                <onMatch>ACCEPT</onMatch>
+                <onMismatch>DENY</onMismatch>
+            </filter>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+
+        <!-- [ERROR]로그 파일 출력 정의 -->
+        <appender name="FILE_ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${ERR_PATH}/err.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${ERR_PATH}/err_%d{yyyy-MM-dd}_%i.log</fileNamePattern>
+                <!-- 로그 파일 최대 크기 설정 -->
+                <maxFileSize>10MB</maxFileSize>
+                <!-- 로그 파일 보관일 설정 -->
+                <maxHistory>60</maxHistory>
+            </rollingPolicy>
+            <!-- ERROR 레벨만 출력 -->
+            <filter class="ch.qos.logback.classic.filter.LevelFilter">
+                <level>ERROR</level>
+                <onMatch>ACCEPT</onMatch>
+                <onMismatch>DENY</onMismatch>
+            </filter>
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+
+        <!-- 콘솔, [INFO]로그 파일, [ERROR]로그 파일 적용 -->
+        <root level="info">
+            <appender-ref ref="CONSOLE" />
+            <appender-ref ref="FILE_INFO" />
+            <appender-ref ref="FILE_ERROR" />
+        </root>
+    </springProfile>
+</configuration>

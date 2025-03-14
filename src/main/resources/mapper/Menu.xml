@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.api.menu.mapper.MenuMapper">
+    <select id="selectMenuList" resultType="ai.maum.chathub.api.menu.dto.MenuRes" parameterType="Map">
+        WITH user_max_role AS (
+            SELECT MAX(r.role_level) AS max_role_level
+            FROM role r
+            JOIN (
+                SELECT DISTINCT UNNEST(string_to_array(mem.roles, '|')) AS role_name
+                FROM member mem
+                WHERE mem.user_key = #{userKey}
+            ) role_list
+            ON r.name = role_list.role_name
+        )
+        SELECT DISTINCT ON (m.seq, m.id)  -- 중복 제거
+               m.id, m.title, m.sub_title, m.description, m.to, m.menu_type, m.seq, m.use_yn, m.created_at
+        FROM menu m
+                 JOIN menu_organization mo ON m.id = mo.menu_id
+                 JOIN menu_role mr ON m.id = mr.menu_id
+                 JOIN role r ON r.role_level >= mr.min_role_level  -- 역할 계층 비교
+                 JOIN organization o ON mo.organization_id = o.id  -- 조직 매칭
+                 JOIN member_organization mo2 ON mo2.organization_id = o.id
+                 JOIN member mem ON mem.user_key = mo2.member_id
+                 JOIN user_max_role umr ON umr.max_role_level >= mr.min_role_level  -- 가장 높은 역할을 기준으로 필터링
+        WHERE mem.user_key = #{userKey}
+          AND m.menu_type = #{menuType}
+        ORDER BY m.seq, m.id
+    </select>
+</mapper>

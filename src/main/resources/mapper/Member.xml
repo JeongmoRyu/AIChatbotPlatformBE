@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.api.member.mapper.MemberMapper">
+    <select id="selectMemberList" resultType="ai.maum.chathub.api.member.dto.MemberDetail" parameterType="Long">
+        SELECT
+            user_key,
+            username,
+            name,
+            birth_year,
+            sex,
+            roles,
+            created_at,
+            updated_at,
+            CASE
+                WHEN roles LIKE '%ROLE_EDITOR%' THEN true
+                ELSE false
+                END AS is_editor,
+            CASE
+                WHEN roles LIKE '%ROLE_ADMIN%' THEN true
+                ELSE false
+            END AS is_admin,
+            CASE
+                WHEN roles LIKE '%ROLE_SUPER_ADMIN%' THEN true
+                ELSE false
+            END AS is_super_admin
+        FROM
+            member
+    </select>
+    <select id="findMemberByUserKey" resultType="ai.maum.chathub.api.member.dto.MemberDetail" parameterType="Long">
+        SELECT username, password, name, user_key, vendor_type, receive_id, longitude, latitude, roles, default_chatbot_id, birth_year, sex,
+               CASE
+                   WHEN roles LIKE '%ROLE_EDITOR%' THEN true
+                   ELSE false
+                   END AS is_editor,
+               CASE
+                   WHEN roles LIKE '%ROLE_ADMIN%' THEN true
+                   ELSE false
+                   END AS is_admin,
+               CASE
+                   WHEN roles LIKE '%ROLE_SUPER_ADMIN%' THEN true
+                   ELSE false
+                   END AS is_super_admin
+         FROM member
+        WHERE user_key = #{userKey}
+    </select>
+    <select id="findMemberByVendorUserKeyAndVendorType" resultType="ai.maum.chathub.api.member.dto.MemberDetail" parameterType="map">
+        SELECT username, password, name, user_key, vendor_type, receive_id, longitude, latitude, roles, default_chatbot_id, birth_year, sex
+        FROM member
+        WHERE vendor_user_key = #{vendorUserKey}
+          AND vendor_type = #{vendorType}
+    </select>
+    <select id="findMemberByVendorUserIdAndVendorType" resultType="ai.maum.chathub.api.member.dto.MemberDetail" parameterType="map">
+        SELECT username, password, name, user_key, vendor_type, receive_id, longitude, latitude, roles, default_chatbot_id, birth_year, sex
+        FROM member
+        WHERE vendor_user_id = #{vendorUserId}
+          AND vendor_type = #{vendorType}
+    </select>
+    <select id="findMemberByReceiveIdAndVendorType" resultType="ai.maum.chathub.api.member.dto.MemberDetail" parameterType="map">
+        SELECT user_key, username, password, name, receive_id, longitude, latitude, roles, default_chatbot_id, birth_year, sex
+        FROM member
+        WHERE receive_id = #{receiveId}
+          AND vendor_type = #{vendorType}
+        LIMIT 1
+    </select>
+    <update id="updateMemberBotId" parameterType="map">
+        UPDATE member
+           SET vendor_user_key = #{vendorUserKey}, updated_at = now()
+        WHERE user_key = #{userKey}
+    </update>
+    <update id="updateMemberByUserKey" parameterType="map">
+        UPDATE member
+        SET password = #{password}, name = #{name}, roles = #{roles}, birth_year = #{birthYear}, sex = #{sex}, updated_at = now()
+        WHERE user_key = #{userKey}
+    </update>
+    <select id="findMemberByName" resultType="ai.maum.chathub.api.member.dto.MemberDetail" parameterType="map">
+        SELECT user_key, username, password, name, receive_id, longitude, latitude, roles, default_chatbot_id, birth_year, sex
+        FROM member
+        WHERE name = #{name}
+    </select>
+    <insert id="insertMember" useGeneratedKeys="true" keyProperty="userKey" parameterType="ai.maum.chathub.api.member.dto.MemberDetail">
+        INSERT INTO member
+            ( username, password, name, vendor_user_key, vendor_type,
+              receive_id, vendor_user_id, longitude, latitude, birth_year, sex, roles)
+        VALUES
+            (#{username}, #{password}, #{name}, #{vendorUserKey}, #{vendorType},
+             #{receiveId}, #{vendorUserId}, #{longitude}, #{latitude}, #{birthYear}, #{sex}, #{roles})
+    </insert>
+    <insert id="insertMembers" parameterType="List">
+        INSERT INTO member
+        ( username, password, name, vendor_user_key, vendor_type,
+          receive_id, vendor_user_id, longitude, latitude, birth_year, sex, roles)
+        VALUES
+        <foreach collection="userList" item="item" separator=",">
+            (#{item.username}, #{item.password}, #{item.name}, #{item.vendorUserKey}, #{item.vendorType},
+            #{item.receiveId}, #{item.vendorUserId}, #{item.longitude}, #{item.latitude}, #{item.birthYear}, #{item.sex}, #{item.roles})
+        </foreach>
+    </insert>
+    <insert id="upsertMember" useGeneratedKeys="true" keyProperty="userKey" parameterType="ai.maum.chathub.api.member.dto.MemberDetail">
+        INSERT INTO member
+            (username, password, name, roles)
+        VALUES
+            (#{username}, #{password}, #{name}, #{roles})
+            ON CONFLICT (username) DO UPDATE
+                                          SET
+                                              password = EXCLUDED.password,
+                                          name = EXCLUDED.name,
+                                          roles = EXCLUDED.roles,
+                                          updated_at = now()
+    </insert>
+    <update id="updateMember" parameterType="ai.maum.chathub.api.member.dto.MemberDetail">
+        UPDATE member
+        SET password = (
+                        CASE
+                            WHEN #{password, jdbcType=VARCHAR} IS NULL OR #{password, jdbcType=VARCHAR} = '' THEN password
+                            ELSE #{password, jdbcType=VARCHAR}
+                            END
+                        ),
+            name = COALESCE(#{name, jdbcType=VARCHAR}, name),
+            birth_year = COALESCE(#{birthYear, jdbcType=VARCHAR}, birth_year),
+            sex = COALESCE(#{sex, jdbcType=VARCHAR}, sex),
+            roles = COALESCE(#{roles, jdbcType=VARCHAR}, roles),
+            username = COALESCE(#{username, jdbcType=VARCHAR}, username),
+            updated_at = now()
+        WHERE user_key = #{userKey, jdbcType=BIGINT}
+    </update>
+    <select id="findMemberByUsername" resultType="ai.maum.chathub.api.member.dto.MemberDetail" parameterType="String">
+        SELECT username, password, name, user_key, vendor_type, receive_id, longitude, latitude, roles, default_chatbot_id, birth_year, sex, use_yn
+        FROM member
+        WHERE username = #{username}
+    </select>
+    <delete id="deleteMemberByUserKey" parameterType="Long">
+        DELETE FROM member
+        WHERE user_key = #{userKey}
+    </delete>
+    <update id="softDeleteMemberByUserKey" parameterType="Long">
+        UPDATE member
+           SET use_yn = 'N', updated_at = now()
+        WHERE user_key = #{userKey}
+    </update>
+    <insert id="backupMemberBeforeDelete" parameterType="Long">
+        INSERT INTO member_delete
+        SELECT * FROM member
+        WHERE user_key = #{userKey}
+    </insert>
+    <select id="findIdByInList" parameterType="List" resultType="String">
+        SELECT username AS email
+          FROM member
+         WHERE username in (
+                <foreach collection="idList" item="item" separator=",">
+                    #{item}
+                </foreach>
+             )
+    </select>
+    <select id="getMyRoleLevel" parameterType="Long" resultType="int">
+        SELECT MAX(r.role_level) AS max_role_level
+        FROM role r
+        JOIN (
+                SELECT DISTINCT UNNEST(string_to_array(mem.roles, '|')) AS role_name
+                FROM member mem
+                WHERE mem.user_key = #{userKey}
+            ) role_list
+        ON r.name = role_list.role_name
+    </select>
+</mapper>

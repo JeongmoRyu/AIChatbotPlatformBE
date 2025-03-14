@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.mybatis.mapper.MonitorLogMapper">
+    <select id="selectLogByDate" resultType="ai.maum.chathub.mybatis.vo.MonitorLogVO" parameterType="map">
+        select a.room_id, a.seq, a.log, a.id, a.title, to_char(a.created_at, 'YYYY/MM/DD HH24:MI') AS created_at
+        from chat_monitor_log as a,
+             (select distinct room_id, seq, max(id) as id, max(created_at) as created_at
+              from chat_monitor_log
+              group by room_id, seq) as b
+        where a.id = b.id
+          and a.created_at between #{startDate} and #{endDate}
+        order by a.id desc
+    </select>
+
+    <select id="selectLogForFunctionCallBySeq" resultType="ai.maum.chathub.mybatis.vo.MonitorLogVO" parameterType="Long">
+        SELECT a.room_id, a.seq, a.log, a.id, a.title, to_char(a.created_at, 'YYYY/MM/DD HH24:MI') AS created_at
+          FROM chat_monitor_log as a
+         WHERE seq = #{seq}
+           AND (title like 'FUNCTION_CALL%' or title like 'retriever%')
+        ORDER BY id ASC
+    </select>
+</mapper>

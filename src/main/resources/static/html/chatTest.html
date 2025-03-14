@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fetch Stream Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        textarea { width: 100%; height: 100px; margin-bottom: 10px; }
+        input[type="text"] { width: 100%; margin-bottom: 10px; }
+        button { padding: 10px 15px; }
+    </style>
+</head>
+<body>
+<h2>Fetch API Stream Test</h2>
+<div>
+    <input type="text" id="urlInput" placeholder="Enter URL">
+</div>
+<div>
+    <textarea id="headersInput" placeholder="Enter Headers in JSON format"></textarea>
+</div>
+<div>
+    <textarea id="bodyInput" placeholder="Enter Body in JSON format"></textarea>
+</div>
+<br>
+<button onclick="sendRequest()">Send Request</button>
+<p>
+
+<div>
+    <textarea disabled="true" style="height: 400px">
+URL
+https://chatplay-api-stg.maum.ai/chat/15
+
+Header
+{
+    "Content-Type":"application/json",
+    "Authorization":"Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiI2NWFmMjNiMzU0NTEyMDQyOTJhM2ZhZDkiLCJ1c2VyVHlwZSI6IlVTMDIwNCIsInN1YiI6ImNoYXRwbGF5dGVzdDFAbWF1bS5haSIsImVtYWlsIjoiY2hhdHBsYXl0ZXN0MUBtYXVtLmFpIiwibmFtZSI6ImNoYXRwbGF5dGVzdDEiLCJzdGF0dXMiOiJVTlNVQlNDUklCRUQiLCJleHBpcmVkRGF0ZSI6IiIsImlhdCI6MTcwNzI4MTMxOCwiZXhwIjoxNzA3MzY3NzE4fQ.Sjxns6ABBvx8oo2dgRcXKYXNsFCPjX-G64BND8H8sus"
+}
+
+Body
+[
+    {
+        "role":"user",
+        "content":"지성피부에 좋은 화장품을 추천해주세요"
+    }
+]
+    </textarea>
+
+</div>
+<p></p>
+<div>
+    <button onclick="websocketConnect()">websocket connect</button>
+    <button onclick="websocketClose()">websocket close</button>
+</div>
+
+<script>
+    function sendRequest() {
+        const url = document.getElementById('urlInput').value;
+        const headersInput = document.getElementById('headersInput').value;
+        const bodyInput = document.getElementById('bodyInput').value;
+
+        try {
+            const headers = JSON.parse(headersInput);
+            const body = JSON.parse(bodyInput);
+
+            fetch(url, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify(body),
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.body.getReader();
+                })
+                .then(reader => {
+                    const decoder = new TextDecoder();
+
+                    return reader.read().then(function processText({ done, value }) {
+                        if (done) {
+                            console.log("Stream complete");
+                            return;
+                        }
+
+                        const text = decoder.decode(value);
+                        console.log(text);
+
+                        return reader.read().then(processText);
+                    });
+                })
+                .catch(error => console.error("Fetch error:", error));
+        } catch (e) {
+            console.error("Error parsing JSON:", e);
+        }
+    }
+
+    let websocket = null;
+
+    function websocketConnect() {
+        // 웹소켓 연결을 시도할 엔드포인트 URL
+        const websocketEndpoint = "ws://localhost:9991/websocket"; // 적절한 포트번호로 변경해야 합니다.
+        // 웹소켓 연결을 시도
+        websocket = new WebSocket(websocketEndpoint);
+
+        // 웹소켓 연결 시 이벤트 핸들러
+        websocket.onopen = function(event) {
+            console.log("웹소켓 연결 성공");
+        };
+
+        // 웹소켓 메시지 수신 시 이벤트 핸들러
+        websocket.onmessage = function(event) {
+            console.log("메시지 수신:", event.data);
+        };
+
+        // 웹소켓 연결 에러 시 이벤트 핸들러
+        websocket.onerror = function(event) {
+            console.error("웹소켓 연결 에러:", event);
+        };
+
+        // 웹소켓 연결 종료 시 이벤트 핸들러
+        websocket.onclose = function(event) {
+            console.log("웹소켓 연결 종료");
+        };
+
+        // 웹소켓 서버로 메시지 전송 예시
+        // 서버로 메시지를 보낼 때는 websocket.send 메소드를 사용합니다.
+        // 예: websocket.send("Hello, server!");
+    }
+
+    function websocketClose() {
+        if (websocket !== null) {
+            websocket.close();
+            websocket = null; // 연결을 끊은 후 websocket 변수를 초기화
+        }
+    }
+</script>
+</body>
+</html>

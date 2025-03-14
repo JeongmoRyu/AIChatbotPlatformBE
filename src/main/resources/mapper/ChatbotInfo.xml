@@ -1,0 +1,965 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="ai.maum.chathub.mybatis.mapper.ChatbotInfoMapper">
+    <update id="updateChatbotInfoEmbeddingStatus" parameterType="map">
+        UPDATE chatbot_info SET embedding_status = #{embeddingStatus}
+        WHERE id = #{id}
+    </update>
+    <select id="selectChatbotInfoListByUserId" resultType="map" parameterType="String">
+        SELECT id, name, description,  COALESCE(imgfile_id, '') as imgfile_id,
+                (
+                   CASE
+                       WHEN COALESCE(ci.embedding_status, 'C') != 'P' THEN 'C'
+--                        WHEN NOW() - ci.updated_at > INTERVAL '60 seconds' THEN 'C'
+                       ELSE 'P'
+                    END
+                ) AS embedding_status
+          FROM chatbot_info ci
+         WHERE ci.user_id = #{userId}
+           AND ci.use_yn = 'Y'
+    </select>
+    <select id="selectChatbotInfoList" resultType="map" parameterType="Long">
+        SELECT ci.id, ci.name, ci.description,
+               COALESCE(ci.imgfile_id, '') AS imgfile_id,
+               COALESCE(ci.user_id::int8, 0) AS user_key,
+               COALESCE(m.username, '') AS user_id,
+               COALESCE(m.name, '') AS user_name,
+               TO_CHAR(ci.updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at,
+               (
+                   CASE
+                       WHEN COALESCE(ci.embedding_status, 'C') != 'P' THEN 'C'
+                       ELSE 'P'
+                   END
+               ) AS embedding_status,
+               (
+                   CASE
+                       WHEN ci.user_id::int8 = #{userKey} THEN true
+                       ELSE false
+                   END
+               ) AS is_mine
+        FROM chatbot_info ci
+        LEFT JOIN member m ON m.user_key = ci.user_id::int8
+        <!-- role_level 4(SUPER_ADMIN)이 아닐 경우 조직 매핑 적용 -->
+        <if test="roleLevel &lt; 4">
+            INNER JOIN chatbot_info_organization cio ON ci.id = cio.chatbot_id
+        </if>
+        WHERE ci.use_yn = 'Y'
+        <!-- 특정 조직 필터링 (Super Admin 제외) -->
+        <if test="roleLevel &lt; 4">
+            AND cio.organization_id = #{organizationId}
+        </if>
+        <!-- role_level 2(EDITOR) 이하: hidden_yn = 'N' 조건 추가 -->
+        <if test="roleLevel &lt;= 2">
+            AND ci.hidden_yn = 'N'
+        </if>
+        <!-- role_level 1(USER)만: public_use_yn = 'Y' 조건 추가 -->
+        <if test="roleLevel == 1">
+            AND ci.public_use_yn = 'Y'
+        </if>
+        ORDER BY ci.public_use_yn DESC, ci.id ASC
+    </select>
+    <select id="selectChatbotInfoListForSuperAdmin" resultType="map" parameterType="Long">
+        SELECT ci.id, ci.name, ci.description,  COALESCE(ci.imgfile_id, '') as imgfile_id, COALESCE(ci.user_id::int8, 0) as user_key,
+               COALESCE(m.username, '') as user_id, COALESCE(m.name, '') as user_name, TO_CHAR(ci.updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at,
+               (
+                   CASE
+                       WHEN COALESCE(ci.embedding_status, 'C') != 'P' THEN 'C'
+--                     WHEN NOW() - ci.updated_at > INTERVAL '60 seconds' THEN 'C'
+                       ELSE 'P'
+                       END
+                   ) AS embedding_status,
+               (
+                   CASE
+                       WHEN ci.user_id::int8 = #{userKey} THEN true
+                       ELSE false
+                       END
+                   ) AS is_mine
+        FROM chatbot_info ci
+                 LEFT JOIN member m ON m.user_key = ci.user_id::int8
+        WHERE ci.use_yn = 'Y'
+        ORDER BY ci.public_use_yn desc, id asc
+    </select>
+    <select id="selectChatbotInfoListForAdmin" resultType="map" parameterType="Long">
+        SELECT ci.id, ci.name, ci.description,  COALESCE(ci.imgfile_id, '') as imgfile_id, COALESCE(ci.user_id::int8, 0) as user_key,
+               COALESCE(m.username, '') as user_id, COALESCE(m.name, '') as user_name, TO_CHAR(ci.updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at,
+            (
+                CASE
+                    WHEN COALESCE(ci.embedding_status, 'C') != 'P' THEN 'C'
+--                     WHEN NOW() - ci.updated_at > INTERVAL '60 seconds' THEN 'C'
+                    ELSE 'P'
+                    END
+                ) AS embedding_status,
+               (
+                   CASE
+                       WHEN ci.user_id::int8 = #{userKey} THEN true
+                       ELSE false
+                       END
+                   ) AS is_mine
+        FROM chatbot_info ci
+        LEFT JOIN member m ON m.user_key = ci.user_id::int8
+        INNER JOIN chatbot_info_organization cio ON ci.id = cio.chatbot_id -- ✅ 특정 조직과 연결된 챗봇만 조회
+        WHERE ci.use_yn = 'Y'
+          AND cio.organization_id = #{organizationId}  -- ✅ 조직 필터링 추가
+        ORDER BY ci.public_use_yn desc, id asc
+    </select>
+    <select id="selectChatbotInfoListForEditor" resultType="map" parameterType="Long">
+        SELECT ci.id, ci.name, ci.description,  COALESCE(ci.imgfile_id, '') as imgfile_id, COALESCE(ci.user_id::int8, 0) as user_key,
+               COALESCE(m.username, '') as user_id, COALESCE(m.name, '') as user_name, TO_CHAR(ci.updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at,
+               (
+                   CASE
+                       WHEN COALESCE(ci.embedding_status, 'C') != 'P' THEN 'C'
+--                     WHEN NOW() - ci.updated_at > INTERVAL '60 seconds' THEN 'C'
+                       ELSE 'P'
+                       END
+                   ) AS embedding_status,
+               (
+                   CASE
+                       WHEN ci.user_id::int8 = #{userKey} THEN true
+                       ELSE false
+                       END
+                   ) AS is_mine
+        FROM chatbot_info ci
+        LEFT JOIN member m ON m.user_key = ci.user_id::int8
+        INNER JOIN chatbot_info_organization cio ON ci.id = cio.chatbot_id -- ✅ 특정 조직과 연결된 챗봇만 조회
+        WHERE ci.use_yn = 'Y'
+          AND ci.hidden_yn = 'N'
+          AND cio.organization_id = #{organizationId}  -- ✅ 조직 필터링 추가
+        ORDER BY ci.public_use_yn desc, id asc
+    </select>
+    <select id="selectChatbotInfoListForUser" resultType="map" parameterType="Long">
+        SELECT ci.id, ci.name, ci.description,  COALESCE(ci.imgfile_id, '') as imgfile_id, COALESCE(ci.user_id::int8, 0) as user_key,
+               COALESCE(m.username, '') as user_id, COALESCE(m.name, '') as user_name, TO_CHAR(ci.updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at,
+               (
+                   CASE
+                       WHEN COALESCE(ci.embedding_status, 'C') != 'P' THEN 'C'
+--                        WHEN NOW() - ci.updated_at > INTERVAL '60 seconds' THEN 'C'
+                       ELSE 'P'
+                       END
+                   ) AS embedding_status,
+               (
+                   CASE
+                       WHEN ci.user_id::int8 = #{userKey} THEN true
+                       ELSE false
+                       END
+                   ) AS is_mine
+        FROM chatbot_info ci
+        LEFT JOIN member m ON m.user_key = ci.user_id::int8
+        INNER JOIN chatbot_info_organization cio ON ci.id = cio.chatbot_id -- ✅ 특정 조직과 연결된 챗봇만 조회
+        WHERE ci.use_yn = 'Y'
+          AND ci.public_use_yn = 'Y'
+          AND ci.hidden_yn = 'N'
+          AND cio.organization_id = #{organizationId}  -- ✅ 조직 필터링 추가
+        ORDER BY ci.id asc
+    </select>
+    <select id="selectChatbotInfoMapById" resultType="map" parameterType="Long">
+        <!-- Get ChatbotInfo -->
+        SELECT 'root' AS json_key,
+                json_build_object(
+                    'id', ci.id,
+                    'name', ci.name,
+                    'description', COALESCE(ci.description, ''),
+                    'imgfile_id',  COALESCE(ci.imgfile_id, ''),
+                    'public_use_yn', (ci.public_use_yn = 'Y')::boolean,
+                    'hidden_yn', (ci.hidden_yn = 'Y')::boolean,
+                    'embedding_status', (
+                        CASE
+                            WHEN COALESCE(ci.embedding_status, 'C') != 'P' THEN 'C'
+--                             WHEN NOW() - ci.updated_at > INTERVAL '20 seconds' THEN 'C'
+                            ELSE 'P'
+                        END
+                    )
+                ) AS json_value
+          FROM chatbot_info ci
+         WHERE ci.id = #{chatbot_id}
+           AND ci.use_yn = 'Y'
+        UNION ALL
+        SELECT 'llm_common',
+                json_build_object(
+                    'memory_type', memory_type_cd,
+                    'window_size', window_size
+                )
+          FROM chatbot_info ci
+          LEFT JOIN code cd ON cd.cd_id = ci.memory_type_cd AND cd.cdgroup_id = 'LLM_COMMON_MEMORY_TYPE'
+         WHERE ci.id = #{chatbot_id}
+           AND ci.use_yn = 'Y'
+        UNION ALL
+        SELECT cd.enum,
+                CASE
+                WHEN cdl.chatbot_llm_type = 'RAG' THEN (
+                        json_build_object(
+                            'system_prompt', COALESCE(cdl.system_prompt, ''),
+                            'user_prompt', COALESCE(cdl.user_prompt, ''),
+                            'retry', cdl.retry_cnt ,
+                            'llm_engine_id', cdl.engine_id ,
+                            'fallback_engine_id', cdl.fallback_engine_id ,
+                            'embedding_engine_id', cdl.embedding_engine_id,
+                            'parameters', cdl.parameters::JSON,
+                            'use_yn', (cdl.use_yn = 'Y')::boolean,
+                            'embedding_type', ( SELECT json_agg(embedding)
+                                                  FROM (
+                                                        SELECT json_build_object(
+                                                                    'id', 'bm25',
+                                                                    'value', CASE WHEN cdl.etc_param1 = 'Y' THEN 1 ELSE 0 END
+                                                               ) AS embedding
+                                                        UNION ALL
+                                                        SELECT json_build_object(
+                                                                    'id', 'openai',
+                                                                    'value', CASE WHEN cdl.etc_param2 = 'Y' THEN 1 ELSE 0 END
+                                                              ) AS embedding
+                                                        ) AS embeddings
+                                              )
+                            ,
+                            'functions', (
+                                           CASE
+                                           WHEN cdl.etc_param0 IS NOT NULL AND cdl.etc_param0 <![CDATA[<>]]> '' THEN cdl.etc_param0::json
+                                           ELSE '[]'::json
+                                           END
+                                         ),
+                            'function_llm_engine_id', cdlfn.engine_id,
+                            'function_fallback_engine_id', cdlfn.fallback_engine_id ,
+                            'function_retry', cdlfn.retry_cnt,
+                            'elastic_search', (SELECT json_build_object(
+                                                    'retry', cde.retry_cnt,
+                                                    'endpoint', cde.engine_id,
+                                                    'top_k', cde.top_k,
+                                                    'parameters', cde.parameters::JSON
+                                                    )
+                                                 FROM chatbot_detail_elastic cde
+                                                 LEFT JOIN base_elastic be ON be.id = cde.engine_id
+                                                WHERE cde.chatbot_id = ci.id
+                                              )
+                        )
+                )
+                ELSE (
+                    json_build_object(
+                    'system_prompt', COALESCE(cdl.system_prompt, ''),
+                    'user_prompt', COALESCE(cdl.user_prompt, ''),
+                    'retry', cdl.retry_cnt ,
+                    'llm_engine_id', cdl.engine_id ,
+                    'fallback_engine_id', cdl.fallback_engine_id ,
+                    'parameters', cdl.parameters::JSON,
+                    'use_yn', (cdl.use_yn = 'Y')::boolean
+                    )
+                )
+                END
+          FROM chatbot_info ci
+          LEFT JOIN chatbot_detail_llm cdl ON cdl.chatbot_id = ci.id AND cdl.chatbot_llm_type <![CDATA[<>]]> 'FNCALL'
+          LEFT JOIN chatbot_detail_llm cdlfn ON cdlfn.chatbot_id = ci.id AND cdlfn.chatbot_llm_type = 'FNCALL'
+          LEFT JOIN code cd ON cd.cd_id = cdl.chatbot_llm_type AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE'
+         WHERE ci.id = #{chatbot_id}
+           AND ci.use_yn = 'Y'
+    </select>
+    <select id="selectUserPromptByChatbotId" resultType="map" parameterType="Long">
+        SELECT 'user_prompt' AS json_key,
+               json_object_agg(cd.enum, cdup.value) AS json_value
+        FROM chatbot_info ci
+                 LEFT JOIN chatbot_detail_user_prompt cdup ON cdup.chatbot_id = ci.id
+                 LEFT JOIN code cd ON cd.cd_id = cdup.pre_info_type AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE'
+        WHERE ci.id = #{chatbot_id}
+          AND ci.use_yn = 'Y'
+    </select>
+
+    <select id="selectLibraryDetailByUserId" resultType="map" parameterType="Long">
+        SELECT 'user_prompt' AS json_key,
+               json_object_agg(cd.enum, mdl.value) AS json_value
+        FROM member mem
+        LEFT JOIN member_detail_library mdl ON mdl.user_key = mem.user_key
+        LEFT JOIN code cd ON cd.cd_id = mdl.library_id::text AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE'
+        WHERE mem.user_key = #{userId}
+    </select>
+
+    <select id="selectChatbotInfoNormalById" resultType="map" parameterType="Long">
+        SELECT ci.id, ci.name, cdl.system_prompt, cdl.user_prompt
+        FROM chatbot_info ci
+        LEFT JOIN chatbot_detail_llm cdl ON cdl.chatbot_id = ci.id AND cdl.chatbot_llm_type = 'NORMAL'
+        WHERE ci.id = #{chatbot_id}
+    </select>
+
+
+    <select id="selectFunctionListByChatbotId" resultType="map" parameterType="Long">
+<!--
+        SELECT json_agg(
+                       json_build_object(
+                               'id', cdf.id,
+                               'name', cdf.name,
+                               'description', cdf.description,
+                               'pre_info_type', cdf.pre_info_type::json,
+                               'filter_prefix', cdf.filter_prefix
+                       )
+                           ORDER BY cdf.filter_prefix
+               )
+        FROM chatbot_detail_fncall cdf
+        WHERE cdf.chatbot_id = #{chatbot_id}
+-->
+        SELECT id, name, description,
+                COALESCE(
+                    ARRAY(
+                        SELECT jsonb_array_elements_text(
+                                CASE
+                                WHEN pre_info_type IS NOT NULL AND pre_info_type <![CDATA[<>]]> '' THEN pre_info_type::jsonb
+                                ELSE '[]'::jsonb
+                                END
+                                )::bigint
+                    ),
+                    '{}'::bigint[]
+                ) AS pre_info_type
+          FROM chatbot_detail_fncall
+         WHERE chatbot_id = #{chatbot_id}
+    </select>
+
+    <select id="selectFunctionListByUserId" resultType="map" parameterType="Long">
+        SELECT id, COALESCE(name, '') AS name, COALESCE(description, '') AS description, COALESCE(img_path, '') AS img_path,
+            COALESCE(
+                ARRAY(
+                    SELECT jsonb_array_elements_text(
+                        CASE
+                        WHEN pre_info_type IS NOT NULL AND pre_info_type <![CDATA[<>]]> '' THEN pre_info_type::jsonb
+                        ELSE '[]'::jsonb
+                        END
+                    )::bigint
+                ),
+                '{}'::bigint[]
+            ) AS pre_info_type
+        FROM base_member_function
+        WHERE user_key = #{user_id}
+          AND use_yn = 'Y'
+    </select>
+
+    <!--
+    <select id="selectFunctionList" resultType="map" parameterType="Long">
+        SELECT id,
+               COALESCE(bmf.name, '') AS name, COALESCE(bmf.description, '') AS description, COALESCE(bmf.img_path, '') AS img_path,
+               bmf.user_key,
+               COALESCE(bmf.question_name, '') AS question_name,
+               COALESCE(bmf.question_detail, '') AS question_detail,
+               COALESCE(bmf.question_image, '') AS question_image,
+               COALESCE(m.username, '') as user_id,
+               COALESCE(m.name, '') as user_name,
+               TO_CHAR(bmf.updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at,
+               COALESCE(
+                       ARRAY(
+                           SELECT jsonb_array_elements_text(
+                        CASE
+                        WHEN bmf.pre_info_type IS NOT NULL AND bmf.pre_info_type <![CDATA[<>]]> '' THEN bmf.pre_info_type::jsonb
+                        ELSE '[]'::jsonb
+                        END
+                    )::bigint
+                ),
+                       '{}'::bigint[]
+               ) AS pre_info_type,
+               (
+                   CASE
+                       WHEN bmf.user_key::int8 = #{userKey} THEN true
+                       ELSE false
+                       END
+                   ) AS is_mine
+        FROM base_member_function bmf
+        LEFT JOIN member m ON m.user_key = bmf.user_key
+       WHERE bmf.use_yn = 'Y'
+    </select>
+    -->
+
+    <select id="selectFunctionList" resultType="map" parameterType="map">
+        SELECT bmf.id,
+        COALESCE(bmf.name, '') AS name,
+        COALESCE(bmf.description, '') AS description,
+        COALESCE(bmf.img_path, '') AS img_path,
+        bmf.user_key,
+        COALESCE(bmf.question_name, '') AS question_name,
+        COALESCE(bmf.question_detail, '') AS question_detail,
+        COALESCE(bmf.question_image, '') AS question_image,
+        COALESCE(m.username, '') as user_id,
+        COALESCE(m.name, '') as user_name,
+        TO_CHAR(bmf.updated_at, 'YYYY-MM-DD HH24:MI:SS') as updated_at,
+        COALESCE(
+        ARRAY(
+        SELECT jsonb_array_elements_text(
+        CASE
+        WHEN bmf.pre_info_type IS NOT NULL AND bmf.pre_info_type <![CDATA[<>]]> ''
+        THEN bmf.pre_info_type::jsonb
+        ELSE '[]'::jsonb
+        END
+        )::bigint
+        ),
+        '{}'::bigint[]
+        ) AS pre_info_type,
+        (
+        CASE
+        WHEN bmf.user_key::int8 = #{userKey} THEN true
+        ELSE false
+        END
+        ) AS is_mine
+        FROM base_member_function bmf
+        LEFT JOIN member m ON m.user_key = bmf.user_key
+
+        <!-- Super Admin이 아닌 경우 조직 매핑 적용 -->
+        <if test="roleLevel &lt; 4">
+            INNER JOIN function_organization bmfo ON bmf.id = bmfo.function_id
+        </if>
+
+        WHERE bmf.use_yn = 'Y'
+
+        <!-- Super Admin이 아닌 경우 특정 조직 필터링 -->
+        <if test="roleLevel &lt; 4">
+            AND bmfo.organization_id = #{organizationId}
+        </if>
+    </select>
+
+    <select id="selectFunctionListByIds" resultType="map" parameterType="list">
+        SELECT id, COALESCE(name, '') AS name, COALESCE(description, '') AS description, COALESCE(img_path, '') AS img_path,
+               COALESCE(filter_prefix, '') AS filter_prefix,
+               COALESCE(
+                       ARRAY(
+                           SELECT jsonb_array_elements_text(
+                        CASE
+                        WHEN pre_info_type IS NOT NULL AND pre_info_type <![CDATA[<>]]> '' THEN pre_info_type::jsonb
+                        ELSE '[]'::jsonb
+                        END
+                    )::int
+                ),
+                       '{}'::int[]
+               ) AS pre_info_type
+         FROM base_member_function
+        WHERE use_yn = 'Y'
+          AND id in (
+            <foreach collection="idList" item="item" separator=",">
+                #{item}
+            </foreach>
+            )
+    </select>
+
+    <select id="selectFunctionInfoById" resultType="ai.maum.chathub.mybatis.vo.FunctionVO" parameterType="Long">
+        SELECT id, user_key,
+               COALESCE(name, '') AS name,
+               COALESCE(description, '') AS description,
+               COALESCE(img_path, '') AS img_path,
+               COALESCE(filter_prefix, '') AS filter_prefix,
+               COALESCE(question_name, '') AS question_name,
+               COALESCE(question_detail, '') AS question_detail,
+               COALESCE(question_image, '') AS question_image,
+               COALESCE(
+                    ARRAY(
+                        SELECT jsonb_array_elements_text(
+                                    CASE
+                                    WHEN pre_info_type IS NOT NULL AND pre_info_type <![CDATA[<>]]> '' THEN pre_info_type::jsonb
+                                    ELSE '[]'::jsonb
+                                    END
+                                )::bigint
+                         ), '{}'::bigint[]
+                ) AS pre_info_type_string,
+                COALESCE (
+                            ( SELECT json_agg(
+                                        json_build_object(
+                                        'id', sf.id,
+                                        'name', sf.org_name,
+                                        'size', sf.SIZE,
+                                        'type', sf.type
+                                        )
+                                     )
+                                FROM function_file ff
+                                INNER JOIN source_file sf ON sf.id = ff.file_id
+                               WHERE function_id = #{id}
+                            ), '[]'::json
+                )AS file_list_string,
+                created_at, updated_at
+        FROM base_member_function
+        WHERE id = #{id}
+          AND use_yn = 'Y'
+    </select>
+
+    <select id="selectFunctFileMappingListByFunctionId" parameterType="map" resultType="map">
+        SELECT function_id, file_id
+          FROM function_file
+         WHERE function_id IN (
+               <foreach collection="idList" item="item" separator=",">
+               #{item}
+               </foreach>
+             )
+    </select>
+
+    <select id="selectFileListByFunctionId" parameterType="Long" resultType="ai.maum.chathub.api.file.entity.SourceFileEntity">
+        SELECT id, org_name, name, path, size, type
+        FROM source_file sf
+                 INNER JOIN function_file ff ON ff.file_id = sf.id
+        WHERE ff.function_id = #{functionId};
+    </select>
+
+    <select id="selectFunctFileMappingList" parameterType="Long" resultType="Long">
+        SELECT file_id
+        FROM function_file
+        WHERE function_id = #{functionId}
+        ORDER BY file_id
+    </select>
+
+    <select id="selectChatbotFunctionFileMappingList" parameterType="Long" resultType="Long">
+        SELECT file_id
+        FROM chatbot_info_detail_embedding_status
+        WHERE chatbot_id = #{chatbotId}
+          AND function_id = #{functionId}
+          AND embedding_engine_id = #{embeddingEngineId}
+        ORDER BY file_id
+    </select>
+
+    <select id="selectChatbotFunctionFileMappingListByChatbotId" parameterType="Long" resultType="ai.maum.chathub.mybatis.vo.ChatbotInfoEmbeddingStats">
+        SELECT chatbot_id, function_id, file_id, embedding_engine_id, embedding_status
+        FROM chatbot_info_detail_embedding_status
+        WHERE chatbot_id = #{chatbot_id}
+    </select>
+
+    <insert id="insertFunctionInfo" parameterType="map" keyProperty="id" useGeneratedKeys="true">
+        insert into base_member_function (user_key, filter_prefix, name, description, pre_info_type, img_path, question_name, question_detail, question_image)
+        values ( #{userKey}, #{functionInfo.filterPrefix}, #{functionInfo.name}, #{functionInfo.description}, #{functionInfo.preInfoTypeString}, #{functionInfo.imgPath}
+               , #{functionInfo.questionName}, #{functionInfo.questionDetail}, #{functionInfo.questionImage})
+        RETURNING id;
+    </insert>
+
+    <update id="updateFunctionInfo" parameterType="ai.maum.chathub.mybatis.vo.FunctionVO">
+        UPDATE base_member_function
+        SET filter_prefix = #{filterPrefix},
+            name = #{name},
+            description = #{description},
+            pre_info_type = #{preInfoTypeString},
+            img_path = #{imgPath},
+            question_name = #{questionName},
+            question_detail = #{questionDetail},
+            question_image = #{questionImage}
+        WHERE id = #{id}
+    </update>
+
+    <delete id="resetFunctionFileMapping" parameterType="Long">
+        DELETE FROM function_file
+        WHERE function_id = #{id}
+    </delete>
+
+    <delete id="deleteEmbeddingStatusByFunctionId" parameterType="map">
+        DELETE FROM chatbot_info_detail_embedding_status
+        WHERE chatbot_id = #{chatbotId}
+          AND function_id = #{functionId}
+    </delete>
+
+    <delete id="deleteEmbeddingStatusByFunctionIdNotInclude" parameterType="map">
+        DELETE FROM chatbot_info_detail_embedding_status
+        WHERE chatbot_id = #{chatbotId}
+          AND function_id NOT IN (
+                <if test="idList != null and idList.size() > 0">
+                    <foreach collection="idList" item="item" separator=",">#{item}
+                    </foreach>
+                </if>
+                <if test="idList == null or idList.size() == 0">
+                    -1
+                </if>
+        )
+    </delete>
+
+    <insert id="setFunctionFileMapping" parameterType="map">
+        INSERT INTO function_file (function_id, file_id)
+        VALUES
+         <foreach collection="fileList" item="item" separator=",">
+            ( #{functionId}, #{item} )
+        </foreach>
+    </insert>
+
+    <insert id="insertChatbotEmbeddingStatus" parameterType="list">
+        INSERT INTO chatbot_info_detail_embedding_status (chatbot_id, function_id, file_id, embedding_engine_id, embedding_status)
+        VALUES
+        <foreach collection="list" item="item" separator=",">
+            ( #{item.chatbotId}, #{item.functionId}, #{item.fileId}, #{item.embeddingEngineId}, #{item.embeddingStatus} )
+        </foreach>
+    </insert>
+
+    <update id="updateChatbotEmbeddingStatus" parameterType="map">
+        UPDATE chatbot_info_detail_embedding_status
+        SET embedding_status = #{embeddingStatus}
+        WHERE (chatbot_id, function_id, file_id, embedding_engine_id) IN (
+        <foreach collection="list" item="item" separator=",">
+            (#{item.chatbotId}, #{item.functionId}, #{item.fileId}, #{item.embeddingEngineId})
+        </foreach>
+        )
+    </update>
+
+    <!-- Update ChatbotInfo -->
+    <!-- Update memory type and window size -->
+    <update id="updateChatbotInfoMemoryTypeAndWindowSize" parameterType="map">
+        UPDATE chatbot_info
+        SET memory_type_cd = #{llmCommon.memoryType},
+            window_size = #{llmCommon.windowSize},
+            name = #{root.name},
+            description = #{root.description},
+            imgfile_id = COALESCE(NULLIF(#{root.imgFileId}, ''), imgfile_id), -- NULL 또는 빈 값일 때 기존 값 유지
+            embedding_status = COALESCE(NULLIF(#{root.embeddingStatus}, ''), embedding_status), -- NULL 또는 빈 값일 때 기존 값 유지
+            public_use_yn = (CASE WHEN #{root.publicUseYn} THEN 'Y' ELSE 'N' END),
+            hidden_yn = (CASE WHEN #{root.hiddenYn} THEN 'Y' ELSE 'N' END),
+            updated_at = now()
+        WHERE id = #{chatbotId}
+    </update>
+
+    <!-- Update user prompts -->
+    <update id="updateChatbotInfoUserPrompts" parameterType="map">
+        UPDATE chatbot_detail_user_prompt
+        SET value = CASE pre_info_type
+                        WHEN (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'consult_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE') THEN #{userPrompt.consultInfo}
+                        WHEN (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'member_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE') THEN #{userPrompt.memberInfo}
+                        WHEN (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'measure_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE') THEN #{userPrompt.measureInfo}
+                        WHEN (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'gene_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE') THEN #{userPrompt.geneInfo}
+                        ELSE value
+                    END,
+            updated_at = now()
+        WHERE chatbot_id = #{chatbotId}
+          AND pre_info_type IN (
+            SELECT cd.cd_id FROM code cd WHERE cd.enum IN ('consult_info', 'member_info', 'measure_info', 'gene_info')
+                                           AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE'
+        );
+    </update>
+    <!-- Update normal conversation LLM -->
+    <update id="updateNormalConversationLLM" parameterType="map">
+        UPDATE chatbot_detail_llm
+        SET system_prompt = #{normalConversation.systemPrompt},
+            user_prompt = #{normalConversation.userPrompt},
+            retry_cnt = #{normalConversation.retry},
+            engine_id = #{normalConversation.llmEngineId},
+            fallback_engine_id = #{normalConversation.fallbackEngineId},
+            parameters = #{normalConversation.parameters}::TEXT,
+            use_yn = (CASE WHEN #{normalConversation.useYn} THEN 'Y' ELSE 'N' END),
+            updated_at = now()
+        WHERE chatbot_id = #{chatbotId} AND chatbot_llm_type =
+            (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'normal_conversation' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE');
+    </update>
+
+    <!-- Update reproduce question LLM -->
+    <update id="updateReproduceQuestionLLM" parameterType="map">
+        UPDATE chatbot_detail_llm
+        SET system_prompt = #{reproduceQuestion.systemPrompt},
+            user_prompt = #{reproduceQuestion.userPrompt},
+            retry_cnt = #{reproduceQuestion.retry},
+            engine_id = #{reproduceQuestion.llmEngineId},
+            fallback_engine_id = #{reproduceQuestion.fallbackEngineId},
+            parameters = #{reproduceQuestion.parameters}::TEXT,
+            use_yn = (CASE WHEN #{reproduceQuestion.useYn} THEN 'Y' ELSE 'N' END),
+            updated_at = now()
+        WHERE chatbot_id = #{chatbotId} AND chatbot_llm_type =
+            (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'reproduce_question' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE');
+    </update>
+
+    <!-- Update RAG LLM -->
+    <update id="updateRagLLM" parameterType="map">
+        UPDATE chatbot_detail_llm
+        SET system_prompt = #{rag.systemPrompt},
+            user_prompt = #{rag.userPrompt},
+            retry_cnt = #{rag.retry},
+            engine_id = #{rag.llmEngineId},
+            fallback_engine_id = #{rag.fallbackEngineId},
+            parameters = #{rag.parameters}::TEXT,
+            embedding_engine_id = #{rag.embeddingEngineId},
+            etc_param0 = #{rag.functionsString}::TEXT,
+            etc_param1 =
+                        CASE
+                        WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(#{rag.embeddingTypeJson}::jsonb) AS et WHERE et->>'id' = 'bm25') THEN
+                            CASE
+                            WHEN (SELECT et->>'value' FROM jsonb_array_elements(#{rag.embeddingTypeJson}::jsonb) AS et WHERE et->>'id' = 'bm25') = '1' THEN 'Y'
+                            ELSE 'N'
+                            END
+                        ELSE etc_param1
+                        END,
+            etc_param2 =
+                        CASE
+                        WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(#{rag.embeddingTypeJson}::jsonb) AS et WHERE et->>'id' = 'openai') THEN
+                            CASE
+                            WHEN (SELECT et->>'value' FROM jsonb_array_elements(#{rag.embeddingTypeJson}::jsonb) AS et WHERE et->>'id' = 'openai') = '1' THEN 'Y'
+                            ELSE 'N'
+                            END
+                        ELSE etc_param2
+                        END,
+            use_yn = (CASE WHEN #{rag.useYn} THEN 'Y' ELSE 'N' END),
+            updated_at = now()
+        WHERE chatbot_id = #{chatbotId} AND chatbot_llm_type =
+            (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'rag' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE');
+    </update>
+
+    <!-- Update function call LLM -->
+    <update id="updateFunctionCallLLM" parameterType="map">
+        UPDATE chatbot_detail_llm
+        SET retry_cnt = #{fnLlm.functionRetry},
+            engine_id = #{fnLlm.functionLlmEngineId},
+            fallback_engine_id = #{fnLlm.functionFallbackEngineId},
+            updated_at = now()
+        WHERE chatbot_id = #{chatbotId} AND chatbot_llm_type = 'FNCALL'
+    </update>
+<!--    <update id="updateFunctionCallLLM" parameterType="map">-->
+<!--        UPDATE chatbot_detail_llm-->
+<!--        SET system_prompt = #{functionCall.systemPrompt},-->
+<!--            user_prompt = #{functionCall.userPrompt},-->
+<!--            retry_cnt = #{functionCall.retry},-->
+<!--            engine_id = #{functionCall.llmEngineId},-->
+<!--            fallback_engine_id = #{functionCall.fallbackEngineId},-->
+<!--            parameters = #{functionCall.parameters}::TEXT,-->
+<!--            updated_at = now()-->
+<!--        WHERE chatbot_id = #{chatbotId} AND chatbot_llm_type =-->
+<!--            (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'function_call' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE');-->
+<!--    </update>-->
+
+    <!-- Update Elastic Search details -->
+    <update id="updateChatbotInfoElasticSearch" parameterType="map">
+        UPDATE chatbot_detail_elastic
+        SET retry_cnt = #{elasticSearch.retry},
+            engine_id = #{elasticSearch.endpoint},
+            top_k = #{elasticSearch.topK},
+            parameters = #{elasticSearch.parameters}::TEXT,
+            updated_at = now()
+        WHERE chatbot_id = #{chatbotId};
+    </update>
+
+    <!-- Update function call details -->
+    <update id="updateChatbotInfoFunctionCalls" parameterType="map">
+        <foreach collection="functionCalls" item="function" separator=";">
+            UPDATE chatbot_detail_fncall
+            SET description = #{function.description},
+            pre_info_type = #{function.preInfoType}::TEXT,
+            updated_at = now()
+            WHERE chatbot_id = #{chatbotId}
+            AND filter_prefix = #{function.filterPrefix}
+            AND name = #{function.name};
+        </foreach>
+    </update>
+
+    <!-- Update function call details -->
+    <update id="updateChatbotInfoFunctionCallsYn" parameterType="map">
+        <foreach collection="functionCalls" item="function" separator=";">
+            UPDATE chatbot_detail_fncall
+            SET description = #{function.description},
+            pre_info_type = #{function.preInfoType}::TEXT,
+            updated_at = now()
+            WHERE chatbot_id = #{chatbotId}
+            AND filter_prefix = #{function.filterPrefix}
+            AND name = #{function.name};
+        </foreach>
+    </update>
+
+    <!-- Insert chatBotInfo-->
+    <!-- Insert memory type and window size -->
+    <insert id="insertChatbotInfoMemoryTypeAndWindowSize" parameterType="map"  keyProperty="id" useGeneratedKeys="true">
+        INSERT INTO chatbot_info (user_id, name, description, memory_type_cd, window_size, imgfile_id, public_use_yn, hidden_yn)
+        VALUES (#{userId}, #{root.name}, #{root.description}, #{llmCommon.memoryType}, #{llmCommon.windowSize}, #{root.imgFileId}, (CASE WHEN #{root.publicUseYn} THEN 'Y' ELSE 'N' END), (CASE WHEN #{root.hiddenYn} THEN 'Y' ELSE 'N' END))
+        RETURNING id;
+    </insert>
+
+
+    <!-- Insert user prompts -->
+    <insert id="insertChatbotInfoUserPrompts" parameterType="map">
+        INSERT INTO chatbot_detail_user_prompt (chatbot_id, pre_info_type, value)
+        VALUES (#{chatbotId},
+                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'consult_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE'), #{userPrompt.consultInfo}),
+               (#{chatbotId},
+                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'member_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE'), #{userPrompt.memberInfo}),
+               (#{chatbotId},
+                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'measure_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE'), #{userPrompt.measureInfo}),
+               (#{chatbotId},
+                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'gene_info' AND cd.cdgroup_id = 'CHATBOT_PRE_INFO_TYPE'), #{userPrompt.geneInfo})
+    </insert>
+
+    <!-- Insert normal conversation LLM -->
+    <insert id="insertNormalConversationLLM" parameterType="map">
+        INSERT INTO chatbot_detail_llm (chatbot_id, chatbot_llm_type, system_prompt, user_prompt, retry_cnt, history_cnt, engine_id, fallback_engine_id, parameters, use_yn)
+        VALUES (#{chatbotId},
+                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'normal_conversation' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE'),
+                #{normalConversation.systemPrompt}, #{normalConversation.userPrompt}, #{normalConversation.retry}, #{llmCommon.windowSize}, #{normalConversation.llmEngineId},
+                #{normalConversation.fallbackEngineId}, #{normalConversation.parameters}::TEXT, (CASE WHEN #{normalConversation.useYn} THEN 'Y' ELSE 'N' END))
+    </insert>
+
+    <!-- Insert reproduce question LLM -->
+    <insert id="insertReproduceQuestionLLM" parameterType="map">
+        INSERT INTO chatbot_detail_llm (chatbot_id, chatbot_llm_type, system_prompt, user_prompt, retry_cnt, history_cnt, engine_id, fallback_engine_id, parameters, use_yn)
+        VALUES (#{chatbotId},
+                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'reproduce_question' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE'),
+                #{reproduceQuestion.systemPrompt}, #{reproduceQuestion.userPrompt}, #{reproduceQuestion.retry}, #{llmCommon.windowSize}, #{reproduceQuestion.llmEngineId},
+                #{reproduceQuestion.fallbackEngineId}, #{reproduceQuestion.parameters}::TEXT, (CASE WHEN #{reproduceQuestion.useYn} THEN 'Y' ELSE 'N' END))
+    </insert>
+
+    <!-- Insert RAG LLM -->
+    <insert id="insertRagLLM" parameterType="map">
+        INSERT INTO chatbot_detail_llm (chatbot_id, chatbot_llm_type, system_prompt, user_prompt, retry_cnt,history_cnt, engine_id, fallback_engine_id, parameters, embedding_engine_id, etc_param0, etc_param1, etc_param2, use_yn)
+        VALUES (#{chatbotId},
+                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'rag' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE'),
+                #{rag.systemPrompt}, #{rag.userPrompt}, #{rag.retry}, #{llmCommon.windowSize}, #{rag.llmEngineId}, #{rag.fallbackEngineId}, #{rag.parameters}::TEXT,
+                #{rag.embeddingEngineId}, #{param0}, #{param1}, #{param2}, (CASE WHEN #{rag.useYn} THEN 'Y' ELSE 'N' END)
+               )
+    </insert>
+
+    <!-- Insert function call LLM -->
+    <insert id="insertFunctionCallLLM" parameterType="map">
+        INSERT INTO chatbot_detail_llm (chatbot_id, chatbot_llm_type, retry_cnt, engine_id, fallback_engine_id)
+        VALUES (#{chatbotId}, 'FNCALL', #{fnLlm.functionRetry}, #{fnLlm.functionLlmEngineId}, #{fnLlm.functionFallbackEngineId})
+    </insert>
+<!--    <insert id="insertFunctionCallLLM" parameterType="map">-->
+<!--        INSERT INTO chatbot_detail_llm (chatbot_id, chatbot_llm_type, system_prompt, user_prompt, retry_cnt,history_cnt, engine_id, fallback_engine_id, parameters)-->
+<!--        VALUES (#{chatbotId},-->
+<!--                (SELECT cd.cd_id FROM code cd WHERE cd.enum = 'function_call' AND cd.cdgroup_id = 'CHATBOT_LLM_TYPE'),-->
+<!--                #{functionCall.systemPrompt}, #{functionCall.userPrompt}, #{functionCall.retry}, #{llmCommon.windowSize}, #{functionCall.llmEngineId},-->
+<!--                #{functionCall.fallbackEngineId}, #{functionCall.parameters}::TEXT)-->
+<!--    </insert>-->
+
+    <!-- Insert Elastic Search details -->
+    <insert id="insertChatbotInfoElasticSearch" parameterType="map">
+        INSERT INTO chatbot_detail_elastic (chatbot_id, retry_cnt, engine_id, top_k, parameters)
+        VALUES (#{chatbotId}, #{elasticSearch.retry}, #{elasticSearch.endpoint}, #{elasticSearch.topK}, #{elasticSearch.parameters}::TEXT)
+    </insert>
+
+    <!-- Insert function call details -->
+    <insert id="insertChatbotInfoFunctionCalls" parameterType="map">
+        <foreach collection="functionCalls" item="function" separator=";">
+            INSERT INTO chatbot_detail_fncall (chatbot_id, filter_prefix, name, description, pre_info_type)
+            VALUES (#{chatbotId}, #{function.filterPrefix}, #{function.name}, #{function.description}, #{function.preInfoType}::TEXT)
+        </foreach>
+    </insert>
+
+    <select id="selectEmbeddingStatusList"  resultType="String" parameterType="list">
+        WITH status_counts AS (
+            SELECT
+                chatbot_id,
+                function_id,
+                embedding_status,
+                COUNT(*) AS status_count
+            FROM
+                chatbot_info_detail_embedding_status
+            WHERE chatbot_id IN (
+                                    <foreach collection="idList" item="item" separator=",">
+                                        #{item}
+                                    </foreach>
+                                )
+            GROUP BY
+                chatbot_id,
+                function_id,
+                embedding_status
+        ),
+             function_totals AS (
+                 SELECT
+                     chatbot_id,
+                     function_id,
+                     SUM(status_count) AS total_count,
+                     SUM(CASE WHEN embedding_status = 'P' THEN status_count ELSE 0 END) AS cnt_processing,
+                     SUM(CASE WHEN embedding_status = 'C' THEN status_count ELSE 0 END) AS cnt_complete,
+                     SUM(CASE WHEN embedding_status = 'T' THEN status_count ELSE 0 END) AS cnt_wait,
+                     SUM(CASE WHEN embedding_status = 'E' THEN status_count ELSE 0 END) AS cnt_error
+                 FROM
+                     status_counts
+                 GROUP BY
+                     chatbot_id,
+                     function_id
+             ),
+             chatbot_totals AS (
+                 SELECT
+                     chatbot_id,
+                     SUM(total_count) AS total_count,
+                     SUM(cnt_processing) AS cnt_processing,
+                     SUM(cnt_complete) AS cnt_complete,
+                     SUM(cnt_wait) AS cnt_wait,
+                     SUM(cnt_error) AS cnt_error
+                 FROM
+                     function_totals
+                 GROUP BY
+                     chatbot_id
+             )
+        SELECT
+            json_build_object(
+                    'chatbot_id', c.chatbot_id,
+                    'total_count', c.total_count,
+                    'cnt_processing', c.cnt_processing,
+                    'cnt_complete', c.cnt_complete,
+                    'cnt_wait', c.cnt_wait,
+                    'cnt_error', c.cnt_error,
+                    'functions', (
+                        SELECT json_agg(
+                                       json_build_object(
+                                               'function_id', f.function_id,
+                                               'total_count', f.total_count,
+                                               'cnt_processing', f.cnt_processing,
+                                               'cnt_complete', f.cnt_complete,
+                                               'cnt_wait', f.cnt_wait,
+                                               'cnt_error', f.cnt_error
+                                       )
+                               )
+                        FROM function_totals f
+                        WHERE f.chatbot_id = c.chatbot_id
+                    )
+            ) AS result_json
+        FROM
+            chatbot_totals c
+    </select>
+
+    <update id="deleteChatbotInfo" parameterType="Long">
+        UPDATE chatbot_info
+           SET use_yn = 'N'
+         WHERE id = #{id}
+    </update>
+
+    <update id="deleteFunction" parameterType="Long">
+        UPDATE base_member_function
+        SET use_yn = 'N'
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectContentsInfoInChatbotInfo" parameterType="Long" resultType="map">
+        WITH parsed_values AS (
+            SELECT
+                ci.id AS chatbot_id,
+                ci.name,
+                ci.description,
+                cdl.etc_param0,
+                bmf_data.parsed_value
+            FROM chatbot_info ci
+            LEFT JOIN chatbot_detail_llm cdl ON cdl.chatbot_id = ci.id AND cdl.chatbot_llm_type = 'RAG'
+            -- LATERAL을 사용하여 unnest 처리, 빈 리스트나 NULL은 NULL로 처리
+            LEFT JOIN LATERAL (
+                SELECT unnest(STRING_TO_ARRAY(TRIM(BOTH '[]' FROM cdl.etc_param0), ','))::BIGINT AS parsed_value
+                WHERE cdl.etc_param0 IS NOT NULL AND cdl.etc_param0 <![CDATA[<>]]> '[]'
+                UNION ALL
+                SELECT NULL AS parsed_value -- etc_param0가 빈 리스트나 NULL이면 NULL 반환
+                WHERE cdl.etc_param0 IS NULL OR cdl.etc_param0 = '[]'
+            ) AS bmf_data ON true
+            WHERE ci.id = #{chatbotId}
+            GROUP BY ci.id, ci.name, ci.description, cdl.etc_param0, bmf_data.parsed_value
+        )
+        SELECT
+            pv.chatbot_id,
+            pv.name,
+            pv.description,
+            pv.etc_param0 as function_list_string,
+            COALESCE(
+                json_agg(
+                    json_build_object(
+                        'id', bmf.id,
+                        'name', bmf.name,
+                        'description', bmf.description,
+                        'question_name', COALESCE(bmf.question_name,''),
+                        'question_detail', COALESCE(bmf.question_detail,''),
+                        'question_image', COALESCE(bmf.question_image,'')
+                    )
+                ) FILTER (WHERE bmf.id IS NOT NULL),
+                '[]'::json  -- 매칭되는 row가 없을 경우 빈 리스트 반환
+            ) AS functions
+        FROM parsed_values pv
+        LEFT JOIN base_member_function bmf ON bmf.id = pv.parsed_value
+        GROUP BY pv.chatbot_id, pv.name, pv.description, pv.etc_param0
+    </select>
+
+    <select id="getChatbotInfoByFunctionId" resultType="map">
+        SELECT ci.id AS chatbot_id, ci.name AS chatbot_name, cdl.etc_param0 AS function_list
+        FROM chatbot_detail_llm cdl
+        LEFT JOIN chatbot_info ci ON ci.id = cdl.chatbot_id
+        WHERE cdl.chatbot_llm_type = 'RAG'
+          AND etc_param0 IS NOT NULL
+          AND etc_param0::jsonb @> to_jsonb(ARRAY[#{functionId}]::bigint[])
+    </select>
+
+    <insert id="insertChatbotOrganization">
+        INSERT INTO chatbot_info_organization (chatbot_id, organization_id)
+        VALUES (#{chatbotId}, #{organizationId})
+    </insert>
+
+    <insert id="insertFunctionOrganization">
+        INSERT INTO function_organization (function_id, organization_id)
+        VALUES (#{functionId}, #{organizationId})
+    </insert>
+</mapper>
