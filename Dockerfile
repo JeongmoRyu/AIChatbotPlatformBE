@@ -1,4 +1,5 @@
 # Base image for Gradle 8.6 and OpenJDK 17
+# Git Guardian test
 FROM gradle:8.6-jdk17 as builder
 
 # Set working directory inside the container
